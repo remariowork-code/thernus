@@ -21,7 +21,7 @@ import { getEffectiveSession } from '../../../shared/market/session';
 import type { MarketStore } from '../../../shared/redis/store';
 import type {
   IMarketDataProvider, MarketSession, NewsHeadline, SectorMetrics, Signal,
-  StockMetrics, Trade, Universe,
+  Snapshot, StockMetrics, Trade, Universe,
 } from '../../../shared/types';
 import { Logger } from '../utils/logger';
 
@@ -70,6 +70,8 @@ export class MarketPipeline {
   private lastSession: MarketSession | null = null;
   private tickInFlight = false;
   private readonly lastQuoteWrite = new Map<string, number>();
+  /** Set when the provider plan lacks the snapshot entitlement. */
+  private snapshotUnavailable = false;
 
   constructor(options: MarketPipelineOptions) {
     this.provider = options.provider;
@@ -155,14 +157,45 @@ export class MarketPipeline {
     } else {
       Logger.info('Warm-up complete', { ready: this.stocks.size, failures });
     }
+
+    if (this.snapshotUnavailable) {
+      Logger.warn(
+        'Provider snapshots are unavailable on this plan. Previous close came from daily bars; ' +
+        'a worker started mid-session will not adopt volume already traded today, so RVOL will ' +
+        'under-report until the next session.',
+      );
+    }
   }
 
   private async warmUpSymbol(symbol: string): Promise<void> {
-    const [snapshot, minuteBars, dailyBars] = await Promise.all([
-      this.provider.getSnapshot(symbol),
+    const [minuteBars, dailyBars] = await Promise.all([
       this.provider.getHistoricalBars(symbol, '1m', 390 * this.config.engine.rvolBaselineDays),
       this.provider.getHistoricalBars(symbol, '1d', this.config.engine.rvolBaselineDays + 1),
     ]);
+
+    // The snapshot is the nicest source of previous close and of the session
+    // already in progress, but not every plan is entitled to it. Its absence
+    // is a degradation, not a failure: the daily bars we already have carry a
+    // previous close, and the session-in-progress seed only matters when the
+    // worker starts mid-day.
+    let snapshot: Snapshot | null = null;
+    try {
+      snapshot = await this.provider.getSnapshot(symbol);
+    } catch (error) {
+      this.snapshotUnavailable = true;
+      Logger.debug('Snapshot unavailable; falling back to daily bars', {
+        symbol, error: String(error),
+      });
+    }
+
+    const previousClose = snapshot?.previousClose
+      || snapshot?.lastPrice
+      || dailyBars[dailyBars.length - 1]?.close
+      || 0;
+
+    if (!previousClose) {
+      throw new Error(`No previous close available for ${symbol}`);
+    }
 
     const profile = buildRvolProfile(minuteBars, this.config.engine.sessionMinutes);
     const dailyCloses = dailyBars.map((b) => b.close);
@@ -175,17 +208,18 @@ export class MarketPipeline {
       : undefined;
 
     const engine = new StockMetricsEngine(symbol, this.config, {
-      previousClose: snapshot.previousClose || snapshot.lastPrice,
+      previousClose,
       rvolProfile: profile.some((v) => v > 0) ? profile : undefined,
       averageDailyVolume,
       dailyCloses,
       // Adopt the session already in progress, so a worker restarted at midday
       // reports correct RVOL and VWAP immediately rather than after the close.
-      lastPrice: snapshot.lastPrice,
-      sessionVolume: snapshot.volume,
-      sessionVwap: snapshot.vwap,
-      sessionHigh: snapshot.dayHigh,
-      sessionLow: snapshot.dayLow,
+      // Only available when the snapshot is.
+      lastPrice: snapshot?.lastPrice,
+      sessionVolume: snapshot?.volume,
+      sessionVwap: snapshot?.vwap,
+      sessionHigh: snapshot?.dayHigh,
+      sessionLow: snapshot?.dayLow,
     });
     this.stocks.set(symbol, engine);
     await this.store.writeRvolProfile(symbol, profile);

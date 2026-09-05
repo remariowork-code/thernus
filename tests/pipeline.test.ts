@@ -316,3 +316,54 @@ describe('mid-session start', () => {
     expect(snapshot.volume).not.toBe(averageDaily);
   });
 });
+
+describe('degraded provider entitlements', () => {
+  /**
+   * Not every plan includes the snapshot endpoint. Its absence is a
+   * degradation, not a failure: previous close is recoverable from the daily
+   * bars the warm-up already fetches, so the scanner still works — it just
+   * cannot adopt a session already in progress.
+   */
+  it('warms up from daily bars when snapshots are not entitled', async () => {
+    MemoryRedisClient.reset();
+    const store = new MarketStore(new MemoryRedisClient());
+    const provider = new SimulatedProvider({
+      symbols: ['MU'], manualClock: true, tickRateHz: 1, seed: 11,
+    });
+
+    // Mimic a 403 on the snapshot endpoint.
+    provider.getSnapshot = async () => {
+      throw new Error('403 You are not entitled to this data');
+    };
+
+    const pipeline = new MarketPipeline({
+      provider, store,
+      universe: {
+        sectors: [{ id: 's', name: 'S', description: '', active: true, constituents: [{ symbol: 'MU', weight: 1 }] }],
+        stocks: [{ symbol: 'MU', name: 'Micron', exchange: 'NASDAQ', active: true }],
+      },
+      config: DEFAULT_CONFIG,
+      now: () => OPEN,
+      session: () => 'REGULAR',
+    });
+
+    // Must not throw, and must still produce a usable engine.
+    await pipeline.warmUp(1);
+    expect(pipeline.stats().symbols).toBe(1);
+
+    await provider.connect();
+    await pipeline.start();
+    provider.step(OPEN);
+    await pipeline.tick();
+
+    const mu = await store.readMetrics('MU');
+    expect(mu).not.toBeNull();
+    // previousClose came from the daily bars, so percent change is meaningful.
+    expect(mu!.previousClose).toBeGreaterThan(0);
+    expect(Number.isFinite(mu!.changePercent)).toBe(true);
+    // The RVOL baseline still exists, because it comes from minute bars.
+    expect(await store.readRvolProfile('MU')).not.toBeNull();
+
+    await pipeline.stop();
+  });
+});
