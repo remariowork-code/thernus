@@ -46,6 +46,9 @@ export interface MarketPipelineOptions {
   session?: (at: Date) => MarketSession;
 }
 
+/** Above this share of warm-up failures, the run is broken rather than degraded. */
+const WARMUP_FAILURE_THRESHOLD = 0.5;
+
 export class MarketPipeline {
   private readonly stocks = new Map<string, StockMetricsEngine>();
   private readonly sectors = new Map<string, SectorEngine>();
@@ -134,7 +137,23 @@ export class MarketPipeline {
     };
 
     await Promise.all(Array.from({ length: Math.min(concurrency, symbols.length) }, worker));
-    Logger.info('Warm-up complete', { ready: this.stocks.size, failures });
+
+    // A symbol without history has no RVOL baseline, and RVOL is the term the
+    // whole product turns on. A handful is degraded; most of them means the
+    // provider rejected us — a wrong key, or a plan without the history
+    // entitlement — and the scanner would otherwise run all day reporting
+    // RVOL 0 for everything while looking perfectly healthy.
+    const failureRate = symbols.length > 0 ? failures / symbols.length : 0;
+    if (failureRate >= WARMUP_FAILURE_THRESHOLD) {
+      Logger.error(
+        'Warm-up failed for most symbols. RVOL has no baseline and detection will not work. ' +
+        'Check MARKET_DATA_API_KEY and that the plan includes historical aggregates.',
+        undefined,
+        { failures, symbols: symbols.length, failureRate: Number(failureRate.toFixed(2)) },
+      );
+    } else {
+      Logger.info('Warm-up complete', { ready: this.stocks.size, failures });
+    }
   }
 
   private async warmUpSymbol(symbol: string): Promise<void> {
