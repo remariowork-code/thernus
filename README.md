@@ -82,9 +82,33 @@ Set these and the fallbacks switch off automatically:
 
 | Variable | Effect when set |
 |---|---|
-| `MARKET_DATA_API_KEY` | Real Polygon data instead of the simulator; banner disappears |
+| `ALPACA_API_KEY_ID` + `ALPACA_API_SECRET_KEY` | Live data via Alpaca; free tier includes a real-time websocket |
+| `MARKET_DATA_API_KEY` | Live data via Polygon/Massive; needs a plan with websocket access |
 | `REDIS_URL` | Worker and web share state; embedded worker turns itself off |
 | `DATABASE_URL` | Database-driven universe, persisted signals, watchlists, alerts |
+
+### Choosing a provider
+
+Both implement `IMarketDataProvider`, so switching is one environment variable.
+
+**Alpaca** is the cheapest route to live data — the free Basic plan includes a
+real-time websocket. Two constraints, both handled in code and logged rather
+than hidden: the free IEX feed is a single venue carrying roughly 2-3% of
+consolidated volume, so absolute volume is a sample of the tape; and a
+subscription is capped at 30 symbols, so narrow the universe:
+
+```bash
+UNIVERSE_SECTORS=semiconductors,memory   # 28 symbols, inside the cap
+ALPACA_FEED=iex
+```
+
+Relative comparisons between symbols still hold on IEX, which is what breadth
+and sector ranking depend on. Absolute RVOL does not — it is a sample ratio.
+`ALPACA_FEED=sip` on a paid plan lifts both constraints.
+
+**Polygon/Massive** needs a plan that includes stock websocket access. The free
+tier serves historical aggregates but refuses the live stream, which no amount
+of code works around.
 
 ```bash
 # 1. Database

@@ -74,23 +74,60 @@ export class DatabaseUniverseSource implements UniverseSource {
  * crashing the worker — a scanner that runs on a slightly stale universe is
  * more useful than one that will not start.
  */
+/**
+ * Narrow the universe to named sectors.
+ *
+ * UNIVERSE_SECTORS is a comma-separated list of sector ids. This exists
+ * because some plans cap how many symbols may be streamed at once — Alpaca's
+ * free tier allows 30 — and a capped subscription silently computes breadth
+ * over an incomplete constituent set, which is worse than watching fewer
+ * sectors properly.
+ */
+export function restrictUniverse(universe: Universe, sectorIds: string[]): Universe {
+  if (sectorIds.length === 0) return universe;
+
+  const wanted = new Set(sectorIds.map((id) => id.trim()).filter(Boolean));
+  const sectors = universe.sectors.filter((sector) => wanted.has(sector.id));
+  const symbols = new Set(sectors.flatMap((s) => s.constituents.map((c) => c.symbol)));
+
+  return {
+    sectors,
+    stocks: universe.stocks.filter((stock) => symbols.has(stock.symbol)),
+  };
+}
+
 export async function loadUniverse(
   prisma: PrismaClient | null,
   onFallback?: (reason: string) => void,
 ): Promise<{ universe: Universe; source: 'database' | 'static' }> {
+  const restrict = (universe: Universe): Universe => {
+    const configured = (process.env.UNIVERSE_SECTORS ?? '')
+      .split(',').map((s) => s.trim()).filter(Boolean);
+    if (configured.length === 0) return universe;
+
+    const restricted = restrictUniverse(universe, configured);
+    if (restricted.sectors.length === 0) {
+      onFallback?.(
+        `UNIVERSE_SECTORS matched no sectors (${configured.join(', ')}); watching everything instead.`,
+      );
+      return universe;
+    }
+    return restricted;
+  };
+
   if (!prisma) {
     onFallback?.('No DATABASE_URL configured; using the built-in seed universe.');
-    return { universe: await new StaticUniverseSource().load(), source: 'static' };
+    return { universe: restrict(await new StaticUniverseSource().load()), source: 'static' };
   }
   try {
     const universe = await new DatabaseUniverseSource(prisma).load();
     if (universe.sectors.length === 0) {
       onFallback?.('Database has no active sectors; using the built-in seed universe. Run `npm run db:seed`.');
-      return { universe: await new StaticUniverseSource().load(), source: 'static' };
+      return { universe: restrict(await new StaticUniverseSource().load()), source: 'static' };
     }
-    return { universe, source: 'database' };
+    return { universe: restrict(universe), source: 'database' };
   } catch (error) {
     onFallback?.(`Database unreachable (${String(error)}); using the built-in seed universe.`);
-    return { universe: await new StaticUniverseSource().load(), source: 'static' };
+    return { universe: restrict(await new StaticUniverseSource().load()), source: 'static' };
   }
 }

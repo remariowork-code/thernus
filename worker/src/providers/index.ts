@@ -10,9 +10,11 @@
 import type { IMarketDataProvider, Universe } from '../../../shared/types';
 import { buildSectorScenario } from './scenarios';
 import { Logger } from '../utils/logger';
+import { AlpacaProvider, type AlpacaFeed } from './AlpacaProvider';
 import { PolygonProvider } from './PolygonProvider';
 import { SimulatedProvider, type Scenario } from './SimulatedProvider';
 
+export { AlpacaProvider } from './AlpacaProvider';
 export { PolygonProvider } from './PolygonProvider';
 export { SimulatedProvider } from './SimulatedProvider';
 export { buildSectorScenario } from './scenarios';
@@ -40,12 +42,15 @@ export function scenariosFromEnv(universe: Universe): Scenario[] | undefined {
   return scenarios;
 }
 
-export type ProviderName = 'polygon' | 'simulated';
+export type ProviderName = 'polygon' | 'alpaca' | 'simulated';
 
 export function resolveProviderName(): ProviderName {
   const explicit = process.env.MARKET_DATA_PROVIDER?.toLowerCase();
-  if (explicit === 'polygon' || explicit === 'simulated') return explicit;
-  return process.env.MARKET_DATA_API_KEY ? 'polygon' : 'simulated';
+  if (explicit === 'polygon' || explicit === 'alpaca' || explicit === 'simulated') return explicit;
+  // Inferred from whichever credentials are present.
+  if (process.env.ALPACA_API_KEY_ID) return 'alpaca';
+  if (process.env.MARKET_DATA_API_KEY) return 'polygon';
+  return 'simulated';
 }
 
 export function createProvider(symbols: string[], scenarios?: Scenario[]): IMarketDataProvider {
@@ -56,6 +61,32 @@ export function createProvider(symbols: string[], scenarios?: Scenario[]): IMark
     if (!apiKey) throw new Error('MARKET_DATA_PROVIDER=polygon requires MARKET_DATA_API_KEY');
     Logger.info('Using Polygon market data', { symbols: symbols.length });
     return new PolygonProvider(apiKey);
+  }
+
+  if (name === 'alpaca') {
+    const keyId = process.env.ALPACA_API_KEY_ID;
+    const secretKey = process.env.ALPACA_API_SECRET_KEY;
+    if (!keyId || !secretKey) {
+      throw new Error(
+        'MARKET_DATA_PROVIDER=alpaca requires ALPACA_API_KEY_ID and ALPACA_API_SECRET_KEY',
+      );
+    }
+
+    const feed = (process.env.ALPACA_FEED?.toLowerCase() as AlpacaFeed) ?? 'iex';
+    const maxStreamSymbols = process.env.ALPACA_MAX_SYMBOLS
+      ? Number(process.env.ALPACA_MAX_SYMBOLS)
+      : undefined;
+
+    if (feed === 'iex') {
+      Logger.warn(
+        'Alpaca IEX feed selected. IEX is a single venue carrying roughly 2-3% of consolidated ' +
+        'volume, so RVOL and volume acceleration are computed from a sample of the tape rather ' +
+        'than the tape. Relative comparisons between symbols hold; absolute volume does not.',
+      );
+    }
+
+    Logger.info('Using Alpaca market data', { symbols: symbols.length, feed });
+    return new AlpacaProvider({ keyId, secretKey, feed, symbols, maxStreamSymbols });
   }
 
   Logger.warn(
