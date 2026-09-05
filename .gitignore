@@ -19,6 +19,11 @@ next-env.d.ts
 .env
 .env*.local
 .env.production
+.env.worker
+
+# Worker logs from the launchd job
+worker.log
+worker.error.log
 
 # Testing
 /coverage

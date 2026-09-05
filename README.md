@@ -115,16 +115,43 @@ of code works around.
 npm run db:migrate
 npm run db:seed          # 17 sectors, 249 symbols
 
-# 2. Worker — Railway, Fly.io, or any long-lived process host
-fly deploy -c fly.worker.toml
-# or: docker build -f Dockerfile.worker -t marketpulse-worker .
-
-# 3. Web
+# 2. Web
 vercel deploy
+
+# 3. Worker — see below
 ```
 
 Run exactly one worker. Two against the same Redis would double every signal and
 race on the state machine; scale by sharding the symbol universe instead.
+
+### Where the worker runs
+
+The worker needs a long-lived process. It does not need a *server* — it accepts
+no inbound traffic, it only holds a websocket out to the data provider and
+writes to Redis. Anything that keeps a Node process alive will do.
+
+**Locally.** Free, and architecturally identical to any host: the deployed
+Vercel app reads the same Upstash Redis this writes to, so the dashboard works
+from anywhere while the worker runs on your machine. For a scanner used during
+market hours at your desk, this is a perfectly reasonable permanent answer.
+
+```bash
+cp .env.example .env.worker   # then fill in the five values
+./scripts/run-worker.sh
+```
+
+To keep it running across reboots, install the launchd job in
+`scripts/com.marketpulse.worker.plist`.
+
+**Always-on, free.** Oracle Cloud's Always Free tier includes ARM VMs that do
+not expire. Card required for identity verification, never charged for Always
+Free resources. `Dockerfile.worker` runs there unchanged.
+
+**Always-on, paid.** Railway and Fly.io both want a card and roughly $5/month.
+`railway.json` and `fly.worker.toml` are ready if you go that way.
+
+Avoid free tiers that sleep on inactivity — a scanner that is asleep at 09:30
+is worse than no scanner.
 
 ## The parts worth knowing about
 
