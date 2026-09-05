@@ -64,6 +64,13 @@ export interface SectorStageThresholds {
   severity: SignalSeverity;
 }
 
+export type SectorThresholdOverride = Partial<{
+  stage1: Partial<SectorStageThresholds>;
+  stage2: Partial<SectorStageThresholds>;
+  stage3: Partial<SectorStageThresholds>;
+  stage4: Partial<SectorStageThresholds>;
+}>;
+
 export interface MarketPulseConfig {
   momentum: { weights: MomentumWeights; scales: MomentumScales };
   sector: {
@@ -81,6 +88,12 @@ export interface MarketPulseConfig {
     catalystCorrelationScore: number;
     /** How recently a catalyst must have landed to escalate a stage-4 move. */
     catalystWindowMinutes: number;
+    /**
+     * Per-sector threshold overrides, keyed by sector id. A narrow sector needs
+     * different numbers from a broad one: three of four memory names moving is
+     * a stronger statement than three of twenty-eight semis.
+     */
+    overrides: Record<string, SectorThresholdOverride>;
   };
   stock: {
     /** MOMENTUM_START fires when score crosses this upward. */
@@ -209,6 +222,16 @@ export const DEFAULT_CONFIG: MarketPulseConfig = {
     leaderCount: 5,
     catalystCorrelationScore: 50,
     catalystWindowMinutes: 30,
+    overrides: {
+      // The dedicated memory scanner from the spec. Only four constituents, so
+      // the "how many are moving" counts drop and breadth must be near-total.
+      memory: {
+        stage1: { minMovingStocks: 2, movingStockMovePct: 1.5, minLeaderAvgMovePct: 1.5, minAvgRvol: 1.5 },
+        stage2: { minMovingStocks: 3, movingStockMovePct: 2.0, minSectorAvgMovePct: 2.0, minAvgRvol: 1.5, minNewHighs: 1 },
+        stage3: { minMovingStocks: 3, movingStockMovePct: 3.0, minSectorAvgMovePct: 2.5, minStrongLeaders: 3, minAvgRvol: 2.0, minNewHighs: 2 },
+        stage4: { minStrongLeaders: 4, minSectorAvgMovePct: 3.0, minAvgRvol: 3.0, minNewHighs: 2 },
+      },
+    },
   },
   stock: {
     momentumStartScore: 55,

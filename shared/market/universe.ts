@@ -274,7 +274,6 @@ export const SECTOR_SEED: SectorSeed[] = [
       { symbol: 'ENPH', name: 'Enphase Energy Inc.', exchange: 'NASDAQ' },
       { symbol: 'PLUG', name: 'Plug Power Inc.', exchange: 'NASDAQ' },
       { symbol: 'LAC', name: 'Lithium Americas Corp.', exchange: 'NYSE' },
-      { symbol: 'RGTI', name: 'Rigetti Computing Inc.', exchange: 'NASDAQ' },
     ],
   },
   {
@@ -298,8 +297,6 @@ export const SECTOR_SEED: SectorSeed[] = [
       { symbol: 'HCA', name: 'HCA Healthcare Inc.', exchange: 'NYSE' },
       { symbol: 'CVS', name: 'CVS Health Corporation', exchange: 'NYSE' },
       { symbol: 'RMD', name: 'ResMed Inc.', exchange: 'NYSE' },
-      { symbol: 'PODD', name: 'Insulet Corporation', exchange: 'NASDAQ' },
-      { symbol: 'IDXX', name: 'IDEXX Laboratories Inc.', exchange: 'NASDAQ' },
     ],
   },
   {
@@ -337,7 +334,6 @@ export const SECTOR_SEED: SectorSeed[] = [
       { symbol: 'MCD', name: "McDonald's Corporation", exchange: 'NYSE' },
       { symbol: 'LULU', name: 'Lululemon Athletica Inc.', exchange: 'NASDAQ' },
       { symbol: 'CMG', name: 'Chipotle Mexican Grill Inc.', exchange: 'NYSE' },
-      { symbol: 'DG', name: 'Dollar General Corporation', exchange: 'NYSE' },
     ],
   },
   {
@@ -354,7 +350,6 @@ export const SECTOR_SEED: SectorSeed[] = [
       { symbol: 'SPOT', name: 'Spotify Technology S.A.', exchange: 'NYSE' },
       { symbol: 'RDDT', name: 'Reddit Inc.', exchange: 'NYSE' },
       { symbol: 'ROKU', name: 'Roku Inc.', exchange: 'NASDAQ' },
-      { symbol: 'PINS', name: 'Pinterest Inc.', exchange: 'NYSE' },
     ],
   },
   {
@@ -368,7 +363,6 @@ export const SECTOR_SEED: SectorSeed[] = [
       { symbol: 'UNP', name: 'Union Pacific Corporation', exchange: 'NYSE' },
       { symbol: 'UPS', name: 'United Parcel Service Inc.', exchange: 'NYSE' },
       { symbol: 'FDX', name: 'FedEx Corporation', exchange: 'NYSE' },
-      { symbol: 'MMM', name: '3M Company', exchange: 'NYSE' },
       { symbol: 'EMR', name: 'Emerson Electric Co.', exchange: 'NYSE' },
       { symbol: 'PH', name: 'Parker-Hannifin Corporation', exchange: 'NYSE' },
       { symbol: 'URI', name: 'United Rentals Inc.', exchange: 'NYSE' },

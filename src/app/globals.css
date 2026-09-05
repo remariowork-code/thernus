@@ -1,26 +1,64 @@
 @import "tailwindcss";
 
+/*
+ * MarketPulse visual language.
+ *
+ * Dark, dense, and quiet. A scanner is read in glances between other windows,
+ * so colour is reserved for meaning — direction, severity, stage — and never
+ * spent on decoration. Type is tabular everywhere a number can change, so
+ * digits do not jitter as they update.
+ */
+
+@theme {
+  --color-bg: oklch(0.16 0.008 260);
+  --color-surface: oklch(0.19 0.009 260);
+  --color-surface-2: oklch(0.23 0.010 260);
+  --color-border: oklch(0.30 0.012 260);
+  --color-border-soft: oklch(0.26 0.010 260);
+
+  --color-text: oklch(0.94 0.004 260);
+  --color-muted: oklch(0.68 0.010 260);
+  --color-faint: oklch(0.52 0.010 260);
+
+  --color-up: oklch(0.78 0.16 155);
+  --color-down: oklch(0.68 0.19 20);
+  --color-accent: oklch(0.76 0.14 220);
+  --color-warn: oklch(0.82 0.15 75);
+
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-feature-settings: "tnum" 1, "cv05" 1;
+  -webkit-font-smoothing: antialiased;
 }
+
+/* Numbers must not shift width as they tick. */
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* A row that just changed, flashed briefly rather than animated continuously. */
+@keyframes flash-up   { from { background-color: color-mix(in oklch, var(--color-up) 18%, transparent); } to { background-color: transparent; } }
+@keyframes flash-down { from { background-color: color-mix(in oklch, var(--color-down) 18%, transparent); } to { background-color: transparent; } }
+.flash-up   { animation: flash-up 700ms ease-out; }
+.flash-down { animation: flash-down 700ms ease-out; }
+
+@keyframes slide-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.slide-in { animation: slide-in 200ms ease-out; }
+
+@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .flash-up, .flash-down, .slide-in, .pulse-dot { animation: none; }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-faint); }

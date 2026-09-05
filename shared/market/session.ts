@@ -6,6 +6,7 @@
  * scanner must not pretend otherwise.
  */
 
+import { nyWallClock } from './nyClock';
 import type { MarketSession } from '../types';
 
 /**
@@ -36,29 +37,13 @@ export interface SessionParts {
   dayOfWeek: number;
 }
 
-/**
- * Decompose an instant into New York wall-clock parts. Uses Intl rather than
- * toLocaleString round-tripping, which silently misreads under some locales.
- */
+/** Decompose an instant into New York wall-clock parts. */
 export function nyParts(at: Date = new Date()): SessionParts {
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', weekday: 'short',
-    hour12: false,
-  });
-  const parts = Object.fromEntries(
-    fmt.formatToParts(at).map((p) => [p.type, p.value]),
-  ) as Record<string, string>;
-
-  const weekdays: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  // Intl renders midnight as "24" in some ICU versions.
-  const hour = parseInt(parts.hour, 10) % 24;
-
+  const clock = nyWallClock(at.getTime());
   return {
-    dateKey: `${parts.year}-${parts.month}-${parts.day}`,
-    minutesOfDay: hour * 60 + parseInt(parts.minute, 10),
-    dayOfWeek: weekdays[parts.weekday] ?? 1,
+    dateKey: clock.dateKey,
+    minutesOfDay: clock.minutesOfDay,
+    dayOfWeek: clock.dayOfWeek,
   };
 }
 
@@ -127,4 +112,21 @@ export function isRvolMeaningful(session: MarketSession): boolean {
 /** VWAP is a session statistic; it means nothing before the open. */
 export function isVwapMeaningful(session: MarketSession): boolean {
   return session === 'REGULAR';
+}
+
+const VALID_SESSIONS: MarketSession[] = ['PREMARKET', 'REGULAR', 'AFTER_HOURS', 'CLOSED'];
+
+/**
+ * The session the engines should actually use.
+ *
+ * MARKETPULSE_FORCE_SESSION pins the session regardless of the clock. This
+ * exists so the system can be demonstrated and exercised outside market hours
+ * — on a Saturday the real answer is CLOSED, and a scanner with nothing to
+ * scan is impossible to evaluate. It is never set in production; every caller
+ * that needs the true session calls `getCurrentSession` directly.
+ */
+export function getEffectiveSession(at: Date = new Date()): MarketSession {
+  const forced = process.env.MARKETPULSE_FORCE_SESSION as MarketSession | undefined;
+  if (forced && VALID_SESSIONS.includes(forced)) return forced;
+  return getCurrentSession(at);
 }

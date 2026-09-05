@@ -40,10 +40,15 @@ export interface Bar {
 }
 
 export interface Snapshot extends Quote {
+  /** Cumulative session volume so far today. */
   volume: number;
+  /** Session VWAP so far today. */
   vwap: number;
   lastPrice: number;
   previousClose: number;
+  dayHigh: number;
+  dayLow: number;
+  dayOpen: number;
 }
 
 export type MarketDataHandler<T> = (data: T) => void | Promise<void>;

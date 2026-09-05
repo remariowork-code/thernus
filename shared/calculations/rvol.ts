@@ -10,6 +10,7 @@
  *   RVOL(t)    = Vcum(t) / E[Vcum(t)]
  */
 
+import { nyWallClock } from '../market/nyClock';
 import type { Bar } from '../types';
 
 /** Expected cumulative volume indexed by minute-of-session, 0..sessionMinutes-1. */
@@ -17,13 +18,12 @@ export type RvolProfile = number[];
 
 /** 09:30 EST is minute 0; 15:59 EST is minute 389. */
 export function minuteOfSession(timestamp: number, sessionMinutes = 390): number {
-  const est = new Date(
-    new Date(timestamp).toLocaleString('en-US', { timeZone: 'America/New_York' }),
-  );
-  const minutesSinceOpen = est.getHours() * 60 + est.getMinutes() - (9 * 60 + 30);
+  const minutesSinceOpen = nyWallClock(timestamp).minutesOfDay - (9 * 60 + 30);
   if (minutesSinceOpen < 0) return 0;
   return Math.min(minutesSinceOpen, sessionMinutes - 1);
 }
+
+const REGULAR_OPEN_MINUTE = 9 * 60 + 30;
 
 /**
  * Fold N days of 1-minute bars into one cumulative-volume curve.
@@ -32,6 +32,12 @@ export function minuteOfSession(timestamp: number, sessionMinutes = 390): number
  * minute-of-session, average across the days that actually traded, and then
  * run a cumulative sum. A missing minute contributes zero incremental volume
  * rather than breaking the curve.
+ *
+ * Bars outside the regular session are *discarded*, not clamped. Providers
+ * routinely return pre- and post-market aggregates alongside session ones, and
+ * folding a night's worth of volume into minute 0 inflates the baseline by
+ * orders of magnitude — which silently drives every RVOL to zero and stops the
+ * scanner detecting anything at all.
  */
 export function buildRvolProfile(
   historicalBars: Bar[],
@@ -39,17 +45,17 @@ export function buildRvolProfile(
 ): RvolProfile {
   const perMinuteTotals = new Array<number>(sessionMinutes).fill(0);
   const daysSeen = new Set<string>();
-  const dayHasMinute = new Map<number, Set<string>>();
 
   for (const bar of historicalBars) {
-    const minute = minuteOfSession(bar.timestamp, sessionMinutes);
-    const dayKey = new Date(bar.timestamp).toLocaleDateString('en-US', {
-      timeZone: 'America/New_York',
-    });
-    daysSeen.add(dayKey);
+    const clock = nyWallClock(bar.timestamp);
+    // Weekends carry no regular session; anything stamped there is bad data.
+    if (clock.dayOfWeek === 0 || clock.dayOfWeek === 6) continue;
+
+    const minute = clock.minutesOfDay - REGULAR_OPEN_MINUTE;
+    if (minute < 0 || minute >= sessionMinutes) continue;
+
+    daysSeen.add(clock.dateKey);
     perMinuteTotals[minute] += bar.volume;
-    if (!dayHasMinute.has(minute)) dayHasMinute.set(minute, new Set());
-    dayHasMinute.get(minute)!.add(dayKey);
   }
 
   const dayCount = Math.max(daysSeen.size, 1);
