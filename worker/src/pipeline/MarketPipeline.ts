@@ -188,6 +188,14 @@ export class MarketPipeline {
       });
     });
 
+    // Publish provenance before the first tick, so the UI can never show live
+    // numbers without saying where they came from.
+    await this.store.writeProviderInfo({
+      providerName: this.provider.providerName,
+      simulated: this.provider.providerName === 'SIMULATED',
+      startedAt: this.now(),
+    });
+
     this.timer = setInterval(() => { void this.tick(); }, this.config.engine.tickIntervalMs);
     Logger.info('Pipeline started', {
       symbols: symbols.length,

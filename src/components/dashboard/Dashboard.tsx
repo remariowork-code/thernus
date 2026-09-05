@@ -28,6 +28,7 @@ import { Panel } from '@/components/ui/primitives';
 
 interface HealthPayload {
   simulated: boolean;
+  provider: string | null;
   redis: string;
   workerConnected: boolean;
   universeSource: string;
@@ -94,7 +95,13 @@ export function Dashboard({ initialSectors }: { initialSectors: SectorMetrics[] 
         signalCount={feed.signals.length}
         clock={clock}
       />
-      <SimulationBanner simulated={health?.simulated ?? false} redis={health?.redis ?? ''} />
+      <SimulationBanner
+        simulated={health?.simulated ?? true}
+        provider={health?.provider ?? null}
+        // Until /api/health answers, assume a worker is present rather than
+        // flashing an alarming banner on every page load.
+        workerConnected={health?.workerConnected ?? true}
+      />
 
       <main className="mx-auto max-w-[1600px] space-y-4 px-5 py-5">
         <StatsOverview sectors={sectors} signals={feed.signals} />

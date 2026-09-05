@@ -105,17 +105,37 @@ export function StatusBar({
 }
 
 /**
- * Shown whenever the data is not real. Deliberately hard to miss and not
- * dismissible — the one thing a trading tool must never be coy about.
+ * Shown whenever the numbers are not live market data.
+ *
+ * Deliberately hard to miss and not dismissible — the one thing a trading tool
+ * must never be coy about. It distinguishes three states, because "no worker"
+ * and "simulated feed" are different problems with different fixes.
  */
-export function SimulationBanner({ simulated, redis }: { simulated: boolean; redis: string }) {
+export function SimulationBanner({
+  simulated, provider, workerConnected,
+}: {
+  simulated: boolean;
+  provider: string | null;
+  workerConnected: boolean;
+}) {
+  if (!workerConnected) {
+    return (
+      <div className="border-b border-down/30 bg-down/10 px-5 py-2 text-center text-xs text-down">
+        <strong className="font-semibold">No market worker is running.</strong>{' '}
+        Nothing is writing to Redis, so every figure on this page is empty rather than stale.
+        Deploy <code className="font-mono">worker/src/index.ts</code> to Railway or Fly.
+      </div>
+    );
+  }
+
   if (!simulated) return null;
+
   return (
     <div className="border-b border-warn/30 bg-warn/10 px-5 py-2 text-center text-xs text-warn">
       <strong className="font-semibold">Simulated data.</strong>{' '}
-      No market-data provider is configured, so every price on this screen is synthetic.
-      Set <code className="font-mono">MARKET_DATA_API_KEY</code> for live quotes.
-      {redis === 'in-process' && ' State is in-process only; set REDIS_URL to run the worker separately.'}
+      The worker is running on a synthetic feed{provider ? ` (${provider})` : ''}, so every price
+      here is invented. Set <code className="font-mono">MARKET_DATA_API_KEY</code> on the worker
+      for live quotes.
     </div>
   );
 }

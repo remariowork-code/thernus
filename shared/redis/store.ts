@@ -17,6 +17,7 @@
  *   signals:critical            Stream  HIGH/CRITICAL only, so the UI can hydrate fast
  *   news:latest                 Stream  recent classified headlines
  *   market:session              String  current session label
+ *   market:provider             Hash    which provider the worker actually used
  *   market:events               PubSub  worker -> SSE gateway broadcast
  */
 
@@ -37,6 +38,7 @@ export const KEYS = {
   signalsCritical: 'signals:critical',
   newsLatest: 'news:latest',
   marketSession: 'market:session',
+  marketProvider: 'market:provider',
   eventsChannel: 'market:events',
 } as const;
 
@@ -264,6 +266,36 @@ export class MarketStore {
 
   async readSession(): Promise<MarketSession | null> {
     return (await this.redis.get(KEYS.marketSession)) as MarketSession | null;
+  }
+
+  /**
+   * Record which provider is actually feeding the system.
+   *
+   * Data provenance is a property of the worker, not of whoever happens to
+   * hold an API key. The web app must not infer "this is live data" from its
+   * own environment — it has never spoken to a market data vendor.
+   */
+  async writeProviderInfo(info: {
+    providerName: string; simulated: boolean; startedAt: number;
+  }): Promise<void> {
+    await this.redis.hset(KEYS.marketProvider, {
+      providerName: info.providerName,
+      simulated: String(info.simulated),
+      startedAt: info.startedAt,
+    });
+    await this.redis.expire(KEYS.marketProvider, DAY_SECONDS);
+  }
+
+  async readProviderInfo(): Promise<
+    { providerName: string; simulated: boolean; startedAt: number } | null
+  > {
+    const raw = await this.redis.hgetall(KEYS.marketProvider);
+    if (!raw || !raw.providerName) return null;
+    return {
+      providerName: raw.providerName,
+      simulated: raw.simulated !== 'false',
+      startedAt: Number(raw.startedAt) || 0,
+    };
   }
 
   /** Fan out to every connected SSE gateway. */

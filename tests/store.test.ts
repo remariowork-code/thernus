@@ -71,3 +71,42 @@ describe('metric round-trip', () => {
     expect(typeof read.leaders[0].momentumScore).toBe('number');
   });
 });
+
+describe('data provenance', () => {
+  beforeEach(() => MemoryRedisClient.reset());
+
+  /**
+   * The web app never speaks to a market data vendor, so its own environment
+   * says nothing about where the numbers came from. Provenance is reported by
+   * the worker, and unknown provenance must read as simulated — claiming live
+   * data wrongly is far worse than the reverse.
+   */
+  it('round-trips what the worker reported', async () => {
+    const store = new MarketStore(new MemoryRedisClient());
+    expect(await store.readProviderInfo()).toBeNull();
+
+    await store.writeProviderInfo({
+      providerName: 'POLYGON', simulated: false, startedAt: 1_700_000_000_000,
+    });
+    const live = (await store.readProviderInfo())!;
+    expect(live.providerName).toBe('POLYGON');
+    expect(live.simulated).toBe(false);
+
+    await store.writeProviderInfo({
+      providerName: 'SIMULATED', simulated: true, startedAt: 1_700_000_000_000,
+    });
+    expect((await store.readProviderInfo())!.simulated).toBe(true);
+  });
+
+  it('treats a malformed or absent record as simulated', async () => {
+    const redis = new MemoryRedisClient();
+    const store = new MarketStore(redis);
+
+    // Nothing written at all.
+    expect(await store.readProviderInfo()).toBeNull();
+
+    // A record missing the flag must not be read as live.
+    await redis.hset('market:provider', { providerName: 'MYSTERY' });
+    expect((await store.readProviderInfo())!.simulated).toBe(true);
+  });
+});

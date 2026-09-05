@@ -50,13 +50,27 @@ export interface SystemStatus {
   universeSource: string;
   sectors: number;
   symbols: number;
-  /** True when no market-data key is set: the numbers on screen are synthetic. */
+  /**
+   * True unless a worker has positively reported that it is on a real feed.
+   *
+   * Reported by the worker, not inferred from this process's environment: the
+   * web app never talks to a market data vendor, so its own env says nothing
+   * about where the numbers came from. Unknown provenance counts as simulated,
+   * because claiming live data wrongly is far worse than the reverse.
+   */
   simulated: boolean;
+  /** Which provider the worker connected to, or null if none has reported. */
+  provider: string | null;
 }
 
 export async function systemStatus(): Promise<SystemStatus> {
   const { value, source } = await universe();
-  const storedSession = await marketStore().readSession().catch(() => null);
+  const store = marketStore();
+  const [storedSession, providerInfo] = await Promise.all([
+    store.readSession().catch(() => null),
+    store.readProviderInfo().catch(() => null),
+  ]);
+
   return {
     session: storedSession ?? getEffectiveSession(),
     redis: usingMemoryFallback() ? 'in-process' : 'external',
@@ -64,6 +78,7 @@ export async function systemStatus(): Promise<SystemStatus> {
     universeSource: source,
     sectors: value.sectors.length,
     symbols: value.stocks.length,
-    simulated: !process.env.MARKET_DATA_API_KEY,
+    simulated: providerInfo ? providerInfo.simulated : true,
+    provider: providerInfo?.providerName ?? null,
   };
 }
