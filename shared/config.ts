@@ -147,6 +147,18 @@ export interface MarketPulseConfig {
     bars5mRetention: number;
     /** Cap on the Redis signal stream. */
     signalStreamMaxLen: number;
+    /**
+     * Subscribe to the NBBO quote feed.
+     *
+     * Off by default, and deliberately so. Nothing in the engines computes
+     * from quotes — they exist only as display detail — but a live open across
+     * a few hundred liquid names produces tens of thousands of quote messages
+     * a second, orders of magnitude more than trades. Persisting each one
+     * saturates both the worker and the Redis request quota to no purpose.
+     */
+    subscribeQuotes: boolean;
+    /** Minimum gap between persisted quotes for a symbol, when enabled. */
+    quoteThrottleMs: number;
   };
 }
 
@@ -273,6 +285,8 @@ export const DEFAULT_CONFIG: MarketPulseConfig = {
     bars1mRetention: 390,
     bars5mRetention: 78,
     signalStreamMaxLen: 10_000,
+    subscribeQuotes: process.env.SUBSCRIBE_QUOTES === 'true',
+    quoteThrottleMs: 1_000,
   },
 };
 

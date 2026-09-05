@@ -69,6 +69,7 @@ export class MarketPipeline {
   private lastTickAt = 0;
   private lastSession: MarketSession | null = null;
   private tickInFlight = false;
+  private readonly lastQuoteWrite = new Map<string, number>();
 
   constructor(options: MarketPipelineOptions) {
     this.provider = options.provider;
@@ -198,14 +199,22 @@ export class MarketPipeline {
     const symbols = this.symbols;
 
     await this.provider.subscribeTrades(symbols, (trade) => this.onTrade(trade));
-    await this.provider.subscribeQuotes(symbols, (quote) => {
-      // Quotes are stored for display only; nothing is computed from them.
-      void this.store.writeQuote(quote.symbol, {
-        bidPrice: quote.bidPrice, bidSize: quote.bidSize,
-        askPrice: quote.askPrice, askSize: quote.askSize,
-        timestamp: quote.timestamp,
+    if (this.config.engine.subscribeQuotes) {
+      await this.provider.subscribeQuotes(symbols, (quote) => {
+        // Throttled per symbol: the quote feed runs orders of magnitude faster
+        // than the trade feed, and nothing is computed from it.
+        const last = this.lastQuoteWrite.get(quote.symbol) ?? 0;
+        const now = this.now();
+        if (now - last < this.config.engine.quoteThrottleMs) return;
+        this.lastQuoteWrite.set(quote.symbol, now);
+
+        void this.store.writeQuote(quote.symbol, {
+          bidPrice: quote.bidPrice, bidSize: quote.bidSize,
+          askPrice: quote.askPrice, askSize: quote.askSize,
+          timestamp: quote.timestamp,
+        });
       });
-    });
+    }
 
     // Publish provenance before the first tick, so the UI can never show live
     // numbers without saying where they came from.
@@ -220,6 +229,7 @@ export class MarketPipeline {
       symbols: symbols.length,
       sectors: this.sectors.size,
       tickMs: this.config.engine.tickIntervalMs,
+      quotes: this.config.engine.subscribeQuotes ? 'subscribed' : 'off',
     });
   }
 
