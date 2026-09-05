@@ -1,0 +1,97 @@
+# Run the market worker on GitHub Actions.
+#
+# A free option that needs no credit card: public repositories get unlimited
+# standard-runner minutes. It is a genuine trade-off, not a free lunch —
+# see the caveats below — but it covers a trading session without a host.
+#
+# Setup: Settings > Secrets and variables > Actions, add
+#   REDIS_URL, DATABASE_URL, ALPACA_API_KEY_ID, ALPACA_API_SECRET_KEY
+#
+# Caveats, honestly:
+#   - A job is capped at 6 hours. A regular session is 6.5, so the last ~30
+#     minutes are not covered by a single run.
+#   - Scheduled workflows are best-effort and can start late under load, so
+#     the open is not guaranteed.
+#   - The worker holds no state between runs. Restarting re-reads the session
+#     snapshot, so RVOL recovers, but signal cooldowns reset.
+#
+# For guaranteed coverage, run it somewhere persistent instead.
+
+name: Market worker
+
+on:
+  schedule:
+    # 13:20 UTC covers 09:20 ET during daylight saving; 14:20 UTC covers it in
+    # winter. Both fire year-round and the guard below stops the wrong one, so
+    # this needs no seasonal editing.
+    - cron: '20 13 * * 1-5'
+    - cron: '20 14 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: 'How long to run for'
+        required: false
+        default: '350'
+
+jobs:
+  run-worker:
+    runs-on: ubuntu-latest
+    # Just under the 6-hour ceiling, so the job ends on our terms and logs a
+    # clean shutdown rather than being killed mid-write.
+    timeout-minutes: 355
+
+    steps:
+      - name: Check this is the right run for today's timezone
+        id: gate
+        run: |
+          # Only proceed when New York is shortly before the open. On a
+          # scheduled run the other cron entry will be the correct one.
+          ny_hour=$(TZ=America/New_York date +%H)
+          ny_min=$(TZ=America/New_York date +%M)
+          echo "New York time: ${ny_hour}:${ny_min}"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$ny_hour" == "09" ]]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Not the pre-open window in New York; this cron entry is for the other half of the year."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.proceed == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.proceed == 'true'
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        if: steps.gate.outputs.proceed == 'true'
+        run: npm ci
+
+      - name: Run the worker until the session ends
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+          ALPACA_FEED: iex
+          MARKET_DATA_PROVIDER: alpaca
+          UNIVERSE_SECTORS: semiconductors,memory
+          LOG_LEVEL: info
+        run: |
+          MINUTES="${{ github.event.inputs.minutes || '350' }}"
+          echo "Running the worker for ${MINUTES} minutes"
+          # SIGTERM on timeout so the worker's shutdown handler runs.
+          timeout --signal=TERM "${MINUTES}m" npx tsx worker/src/index.ts || code=$?
+          # 124 is timeout's "ran to completion", which is the expected ending.
+          if [[ "${code:-0}" == "124" || "${code:-0}" == "0" ]]; then
+            echo "Session window finished."
+          else
+            echo "Worker exited with ${code}"
+            exit "${code}"
+          fi

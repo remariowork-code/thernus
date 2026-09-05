@@ -185,9 +185,17 @@ Missed minutes are not backfilled — the worker only counts volume it saw — s
 gap understates RVOL for the rest of the session. Restarting re-reads the
 session snapshot and recovers.
 
+**GitHub Actions, free, no card.** Public repositories get unlimited standard
+runner minutes, and `.github/workflows/market-worker.yml` starts the worker
+before the open on weekdays. Honest trade-offs: a job is capped at 6 hours
+against a 6.5-hour session, scheduled runs can start late under load, and each
+run starts fresh so signal cooldowns reset. Good enough to watch a session
+without owning a server; not a guarantee.
+
 **Always-on, free.** Oracle Cloud's Always Free tier includes ARM VMs that do
 not expire. Card required for identity verification, never charged for Always
-Free resources. `Dockerfile.worker` runs there unchanged.
+Free resources. `Dockerfile.worker` runs there unchanged. This is the only
+option here that is both free and genuinely continuous.
 
 **Always-on, paid.** Railway and Fly.io both want a card and roughly $5/month.
 `railway.json` and `fly.worker.toml` are ready if you go that way.
