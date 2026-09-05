@@ -102,7 +102,7 @@ say "Wrote $ENV_FILE"
 note "permissions: $(stat -f '%Sp' "$ENV_FILE" 2>/dev/null || stat -c '%A' "$ENV_FILE")"
 
 say "3. Verifying credentials against Alpaca"
-if node scripts/check-alpaca.mjs; then
+if npm run --silent check:alpaca; then
   say "Start the worker with:"
   note "caffeinate -i ./scripts/run-worker.sh"
   note ""

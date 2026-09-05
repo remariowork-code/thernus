@@ -49,18 +49,27 @@ if (!KEY || !SECRET) {
 
 // The symbols the worker would actually subscribe to.
 const SECTORS = (env.UNIVERSE_SECTORS || 'semiconductors,memory').split(',').map((s) => s.trim());
-const { seedUniverse } = await import('../shared/market/universe.ts').catch(() => ({ seedUniverse: null }))
-  .then((m) => m, () => ({ seedUniverse: null }));
-
-let symbols = ['MU', 'NVDA', 'AMD', 'AVGO'];
-if (seedUniverse) {
-  const all = seedUniverse();
-  const wanted = new Set(SECTORS);
-  const picked = all.sectors.filter((s) => wanted.has(s.id));
-  if (picked.length) {
-    symbols = [...new Set(picked.flatMap((s) => s.constituents.map((c) => c.symbol)))];
-  }
+// The universe is TypeScript, so this needs a loader that understands it.
+// Silently testing a four-symbol stand-in would hide the plan's real symbol
+// cap, which is the main thing this script exists to measure.
+let seedUniverse;
+try {
+  ({ seedUniverse } = await import('../shared/market/universe.ts'));
+} catch {
+  console.error(
+    '\nCannot load the universe — run this through tsx so TypeScript resolves:\n' +
+    '  npm run check:alpaca\n',
+  );
+  process.exit(1);
 }
+
+const wanted = new Set(SECTORS);
+const picked = seedUniverse().sectors.filter((s) => wanted.has(s.id));
+if (picked.length === 0) {
+  console.error(`\nUNIVERSE_SECTORS matched no sectors: ${SECTORS.join(', ')}\n`);
+  process.exit(1);
+}
+const symbols = [...new Set(picked.flatMap((s) => s.constituents.map((c) => c.symbol)))];
 
 const REST = 'https://data.alpaca.markets/v2/stocks';
 const headers = { 'APCA-API-KEY-ID': KEY, 'APCA-API-SECRET-KEY': SECRET };
@@ -80,13 +89,16 @@ console.log(`\nfeed: ${FEED}   universe: ${symbols.length} symbols (${SECTORS.jo
 console.log('\n=== REST (worker warm-up) ===');
 
 const snaps = await rest('/snapshots', { symbols: symbols.slice(0, 100).join(','), feed: FEED });
-const returned = Object.keys(snaps.body?.snapshots ?? {}).length;
+// The multi-symbol endpoint keys its response by symbol at the top level;
+// only older/single responses nest under `snapshots`.
+const snapMap = snaps.body?.snapshots ?? snaps.body ?? {};
+const returned = Object.values(snapMap).filter((v) => v && typeof v === 'object').length;
 line('batched snapshots', snaps.status === 200 && returned > 0,
   snaps.status === 200
     ? `${returned}/${Math.min(symbols.length, 100)} symbols in one call`
     : `HTTP ${snaps.status} ${snaps.body?.message ?? ''}`);
 
-const first = snaps.body?.snapshots?.[symbols[0]];
+const first = snapMap[symbols[0]];
 if (first) {
   line('previous close available', Boolean(first.prevDailyBar?.c),
     first.prevDailyBar?.c ? `${symbols[0]} prevClose=${first.prevDailyBar.c}` : 'missing');
