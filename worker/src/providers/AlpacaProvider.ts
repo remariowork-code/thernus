@@ -7,9 +7,13 @@
  *
  *  - The free "Basic" plan streams the IEX feed only, and caps a websocket
  *    subscription at exactly 30 symbols — verified against the live API: 30 is
- *    accepted, 31 returns error 405. IEX is roughly 2-3% of consolidated
- *    volume, so RVOL computed from it is a sample, not the tape. Both are real
- *    limitations, surfaced loudly rather than hidden.
+ *    accepted, 31 returns error 405.
+ *  - The IEX feed carries roughly 2-3% of consolidated volume. This matters
+ *    less than it sounds for RVOL: `getHistoricalBars` requests the same feed,
+ *    so the baseline and the live volume are both IEX and the venue's share
+ *    cancels out of the ratio. What it does affect is absolute share counts,
+ *    which read ~30x below a consolidated quote screen, and noise in thin
+ *    names where an IEX-sized sample is small.
  *  - Only one websocket connection is permitted per account. A second worker
  *    does not degrade; it is refused.
  *

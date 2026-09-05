@@ -79,9 +79,11 @@ export function createProvider(symbols: string[], scenarios?: Scenario[]): IMark
 
     if (feed === 'iex') {
       Logger.warn(
-        'Alpaca IEX feed selected. IEX is a single venue carrying roughly 2-3% of consolidated ' +
-        'volume, so RVOL and volume acceleration are computed from a sample of the tape rather ' +
-        'than the tape. Relative comparisons between symbols hold; absolute volume does not.',
+        'Alpaca IEX feed selected. RVOL and volume acceleration remain valid: the baseline is ' +
+        'built from IEX history and compared against IEX live volume, so the venue\'s share ' +
+        'cancels out of the ratio. Absolute share counts do not — they are IEX-only, roughly ' +
+        '2-3% of consolidated volume, and will read far below a quote screen. Expect more noise ' +
+        'in thinly traded names, where an IEX-sized sample is small.',
       );
     }
 

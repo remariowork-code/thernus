@@ -94,17 +94,21 @@ Both implement `IMarketDataProvider`, so switching is one environment variable.
 **Alpaca** is the cheapest route to live data — the free Basic plan includes a
 real-time websocket. Two constraints, both handled in code and logged rather
 than hidden: the free IEX feed is a single venue carrying roughly 2-3% of
-consolidated volume, so absolute volume is a sample of the tape; and a
-subscription is capped at 30 symbols, so narrow the universe:
+consolidated volume; and a subscription is capped at 30 symbols, so narrow the
+universe:
 
 ```bash
 UNIVERSE_SECTORS=semiconductors,memory   # 28 symbols, inside the cap
 ALPACA_FEED=iex
 ```
 
-Relative comparisons between symbols still hold on IEX, which is what breadth
-and sector ranking depend on. Absolute RVOL does not — it is a sample ratio.
-`ALPACA_FEED=sip` on a paid plan lifts both constraints.
+IEX matters less than its share suggests. Historical bars are requested from
+the same feed, so RVOL compares IEX volume against an IEX baseline and the
+venue's share cancels out of the ratio — as do volume acceleration, breadth and
+sector ranking. What IEX does affect is *absolute* share counts, which read
+roughly 30x below a consolidated quote screen, and noise in thinly traded names
+where an IEX-sized sample is small. `ALPACA_FEED=sip` on a paid plan lifts
+both constraints.
 
 The 30-symbol cap is exact, verified against the live API: 30 symbols are
 accepted, 31 returns `405 symbol limit exceeded`. Check any plan's real limits
@@ -147,6 +151,17 @@ cp .env.example .env.worker   # then fill in the five values
 
 To keep it running across reboots, install the launchd job in
 `scripts/com.marketpulse.worker.plist`.
+
+A sleeping laptop is a stopped worker. During a session, either keep the lid
+open or hold the machine awake for the process:
+
+```bash
+caffeinate -i ./scripts/run-worker.sh
+```
+
+Missed minutes are not backfilled — the worker only counts volume it saw — so a
+gap understates RVOL for the rest of the session. Restarting re-reads the
+session snapshot and recovers.
 
 **Always-on, free.** Oracle Cloud's Always Free tier includes ARM VMs that do
 not expire. Card required for identity verification, never charged for Always
