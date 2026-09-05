@@ -13,12 +13,16 @@ import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 
 export interface ChartPoint { time: number; value: number }
 
+/** Matches the bucketing in /api/sectors/[id]/history. */
+const BUCKET_SECONDS = 15;
+
 export function IntradayChart({ sectorId, points }: { sectorId: string; points: ChartPoint[] }) {
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<'Area'> | null>(null);
   // Guards against out-of-order appends, which the library rejects outright.
   const lastTime = useRef(0);
+  const ready = useRef(false);
 
   useEffect(() => {
     const element = container.current;
@@ -65,12 +69,18 @@ export function IntradayChart({ sectorId, points }: { sectorId: string; points: 
       try {
         const response = await fetch(`/api/sectors/${sectorId}/history`);
         const data = await response.json() as { points: ChartPoint[] };
-        if (disposed || data.points.length === 0) return;
-        area.setData(data.points.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })));
-        lastTime.current = data.points[data.points.length - 1].time;
-        instance.timeScale().fitContent();
+        if (disposed) return;
+        if (data.points.length > 0) {
+          area.setData(data.points.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })));
+          lastTime.current = data.points[data.points.length - 1].time;
+        }
       } catch {
         // No history is a normal cold start, not an error worth showing.
+      } finally {
+        if (!disposed) {
+          instance.timeScale().fitContent();
+          ready.current = true;
+        }
       }
     })();
 
@@ -82,14 +92,31 @@ export function IntradayChart({ sectorId, points }: { sectorId: string; points: 
     };
   }, [sectorId]);
 
-  // Append live points as the feed delivers them.
+  /**
+   * Append live points.
+   *
+   * Bucketed to the same interval the history endpoint uses: the worker
+   * publishes every second, and appending at that rate against a 15-second
+   * history produces a series that is uniformly sampled at the left and dense
+   * at the right, which reads as a spike that is not there.
+   */
   useEffect(() => {
-    if (!series.current || points.length === 0) return;
+    if (!ready.current || !series.current || points.length === 0) return;
+
+    let appended = false;
     for (const point of points) {
-      if (point.time <= lastTime.current) continue;
-      series.current.update({ time: point.time as UTCTimestamp, value: point.value });
-      lastTime.current = point.time;
+      const bucket = Math.floor(point.time / BUCKET_SECONDS) * BUCKET_SECONDS;
+      // Updating the current bucket in place is how the library expects a
+      // still-forming bar to be revised; only a new bucket extends the series.
+      if (bucket < lastTime.current) continue;
+      series.current.update({ time: bucket as UTCTimestamp, value: point.value });
+      if (bucket > lastTime.current) appended = true;
+      lastTime.current = bucket;
     }
+
+    // Refit only when the series actually grew, so the view keeps every point
+    // visible instead of leaving the data squeezed against the right edge.
+    if (appended) chart.current?.timeScale().fitContent();
   }, [points]);
 
   return <div ref={container} className="h-[220px] w-full" />;

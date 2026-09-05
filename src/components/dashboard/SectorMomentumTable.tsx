@@ -9,42 +9,31 @@
  */
 
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
 import type { SectorMetrics } from '@shared/types';
 import { rankSectors } from '@shared/ranking';
 import { changeClass, pct, rvol, signed } from '@/lib/format';
 import { BreadthBar, Empty, ScoreCell, StageBadge, cn } from '@/components/ui/primitives';
 
-/** Flash a row when its stage changes — the event worth catching mid-glance. */
-function useStageFlash(sectors: SectorMetrics[]): Record<string, 'up' | 'down' | undefined> {
-  const previous = useRef(new Map<string, string>());
-  const [flashes, setFlashes] = useState<Record<string, 'up' | 'down' | undefined>>({});
-
-  useEffect(() => {
-    const changed: Record<string, 'up' | 'down'> = {};
-    const rank: Record<string, number> = {
-      IDLE: 0, COOLING: 1, AWAKENING: 2, ACCELERATING: 3, BREAKOUT: 4,
-    };
-    for (const sector of sectors) {
-      const before = previous.current.get(sector.sectorId);
-      if (before && before !== sector.stage) {
-        changed[sector.sectorId] = rank[sector.stage] > rank[before] ? 'up' : 'down';
-      }
-      previous.current.set(sector.sectorId, sector.stage);
-    }
-    if (Object.keys(changed).length === 0) return;
-
-    setFlashes(changed);
-    const timer = setTimeout(() => setFlashes({}), 800);
-    return () => clearTimeout(timer);
-  }, [sectors]);
-
-  return flashes;
+/**
+ * Flash a row when it enters an active stage — the one event worth catching
+ * mid-glance.
+ *
+ * Done with a remount rather than state: the row's key includes its stage, so
+ * a stage change unmounts the old row and mounts a new one, and the CSS
+ * animation runs on mount. No effect and no ref read during render, so no
+ * cascading re-render on every worker tick.
+ *
+ * Idle rows never flash, which is why a first paint full of quiet sectors is
+ * still and only the sectors actually doing something light up.
+ */
+function flashClass(stage: SectorMetrics['stage']): string | false {
+  if (stage === 'AWAKENING' || stage === 'ACCELERATING' || stage === 'BREAKOUT') return 'flash-up';
+  if (stage === 'COOLING') return 'flash-down';
+  return false;
 }
 
 export function SectorMomentumTable({ sectors }: { sectors: SectorMetrics[] }) {
   const ranked = rankSectors(sectors);
-  const flashes = useStageFlash(sectors);
 
   if (ranked.length === 0) {
     return <Empty>Waiting for the first sector calculation…</Empty>;
@@ -70,11 +59,10 @@ export function SectorMomentumTable({ sectors }: { sectors: SectorMetrics[] }) {
         <tbody>
           {ranked.map((sector) => (
             <tr
-              key={sector.sectorId}
+              key={`${sector.sectorId}:${sector.stage}`}
               className={cn(
                 'group border-b border-border-soft/60 transition-colors last:border-0 hover:bg-surface-2/60',
-                flashes[sector.sectorId] === 'up' && 'flash-up',
-                flashes[sector.sectorId] === 'down' && 'flash-down',
+                flashClass(sector.stage),
               )}
             >
               <td className="px-4 py-2.5">

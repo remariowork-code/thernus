@@ -11,6 +11,8 @@
 import Link from 'next/link';
 import { useMemo } from 'react';
 import { useSSE } from '@/hooks/useSSE';
+import { useSignalHistory } from '@/hooks/useSignalHistory';
+import { useCallback } from 'react';
 import { changeClass, pct, rvol, signed } from '@/lib/format';
 import type { SectorMetrics, StockMetrics } from '@shared/types';
 import { LiveSignalFeed } from '@/components/dashboard/LiveSignalFeed';
@@ -37,7 +39,11 @@ export function SectorDetail({
     [feed.metrics, symbols],
   );
 
-  const signals = feed.signals.filter((s) => s.sectorId === sectorId);
+  const signals = useSignalHistory(
+    feed.signals,
+    useCallback((s) => s.sectorId === sectorId, [sectorId]),
+    { sector: sectorId },
+  );
   const news = feed.news.filter((n) => n.sectorIds.includes(sectorId));
 
   return (

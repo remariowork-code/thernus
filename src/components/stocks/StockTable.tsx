@@ -10,7 +10,7 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import type { StockMetrics } from '@shared/types';
 import { changeClass, compactVolume, pct, price, rvol } from '@/lib/format';
-import { Empty, ScoreCell, cn } from '@/components/ui/primitives';
+import { Empty, ScoreCell, StageBadge, cn } from '@/components/ui/primitives';
 
 type SortKey = 'momentumScore' | 'changePercent' | 'change5m' | 'rvol' | 'volumeAcceleration' | 'vwapDistance' | 'symbol';
 
@@ -78,6 +78,7 @@ export function StockTable({
                 </button>
               </th>
             ))}
+            <th className="px-3 py-2 text-left font-medium">State</th>
             {!compact && <th className="px-4 py-2 text-right font-medium">Volume</th>}
           </tr>
         </thead>
@@ -108,6 +109,9 @@ export function StockTable({
               <td className="tabular px-3 py-2 text-right text-muted">{rvol(stock.volumeAcceleration)}</td>
               <td className={cn('tabular px-3 py-2 text-right', changeClass(stock.vwapDistance))}>
                 {pct(stock.vwapDistance)}
+              </td>
+              <td className="px-3 py-2">
+                <StageBadge stage={stock.stage} />
               </td>
               {!compact && (
                 <td className="tabular px-4 py-2 text-right text-faint">

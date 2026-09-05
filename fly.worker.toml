@@ -1,0 +1,27 @@
+# Fly.io deployment for the market worker.
+#
+# Single instance by design: two workers against one Redis would double every
+# signal and race on the state machine. Scale by sharding the symbol universe,
+# not by adding replicas.
+
+app = "marketpulse-worker"
+primary_region = "iad"   # Close to the US exchanges the data comes from.
+
+[build]
+  dockerfile = "Dockerfile.worker"
+
+[env]
+  NODE_ENV = "production"
+  LOG_LEVEL = "info"
+
+[processes]
+  worker = "npx tsx worker/src/index.ts"
+
+# No [[services]] block: the worker accepts no inbound traffic.
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+[deploy]
+  strategy = "immediate"

@@ -52,6 +52,26 @@ export interface StockEngineSeed {
   lastPrice?: number;
 }
 
+/**
+ * A stock's own lifecycle stage.
+ *
+ * Derived rather than tracked, because unlike a sector — whose stage is a
+ * genuine state machine with cooldowns and transitions — a single stock's
+ * stage is only ever a label for its current reading. Breakout additionally
+ * requires a new intraday high: a high score without one is a stock that has
+ * moved, not one that is breaking out.
+ */
+export function deriveStockStage(
+  metrics: { momentumScore: number; isNewHigh: boolean; aboveVwap: boolean },
+  config: MarketPulseConfig,
+): StockStage {
+  const { stageAwakeningScore, stageAcceleratingScore, stageBreakoutScore } = config.stock;
+  if (metrics.momentumScore >= stageBreakoutScore && metrics.isNewHigh) return 'BREAKOUT';
+  if (metrics.momentumScore >= stageAcceleratingScore) return 'ACCELERATING';
+  if (metrics.momentumScore >= stageAwakeningScore) return 'AWAKENING';
+  return 'IDLE';
+}
+
 export class StockMetricsEngine {
   private price = 0;
   private previousClose = 0;
@@ -298,6 +318,9 @@ export class StockMetricsEngine {
       this.config.momentum.scales,
     ).total;
 
+    const isNewHigh =
+      this.lastNewHighAt !== null &&
+      now - this.lastNewHighAt <= this.config.stock.newHighWindowMs;
     const dayHigh = this.dayHigh || this.price;
     const dayLow = Number.isFinite(this.dayLow) ? this.dayLow : this.price;
     const changePercent = this.previousClose > 0
@@ -321,12 +344,13 @@ export class StockMetricsEngine {
       dayHigh,
       dayLow,
       distanceFromHigh: dayHigh > 0 ? ((dayHigh - this.price) / dayHigh) * 100 : 0,
-      isNewHigh:
-        this.lastNewHighAt !== null &&
-        now - this.lastNewHighAt <= this.config.stock.newHighWindowMs,
+      isNewHigh,
       volatility: inputs.volatilityExpansion,
       momentumScore: score,
-      stage: this.stage,
+      stage: deriveStockStage(
+        { momentumScore: score, isNewHigh, aboveVwap: this.price > inputs.vwap },
+        this.config,
+      ),
       updatedAt: this.lastTradeAt || now,
     };
   }

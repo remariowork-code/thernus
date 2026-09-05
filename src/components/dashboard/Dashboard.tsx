@@ -41,7 +41,7 @@ interface WatchlistPayload {
 
 export function Dashboard({ initialSectors }: { initialSectors: SectorMetrics[] }) {
   const feed = useSSE();
-  const alerts = useAlerts(feed.latestSignal);
+  const alerts = useAlerts(feed.latestSignal, feed.signals);
   const [tab, setTab] = useState('awakening');
 
   // A clock rendered on the server would mismatch on hydration, so it starts

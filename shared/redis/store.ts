@@ -187,20 +187,42 @@ export class MarketStore {
   }
 
   /**
-   * The sector score as of `msAgo` milliseconds back, for the acceleration
-   * term. Returns null until enough history exists — an unknown past must not
-   * be read as zero acceleration.
+   * The sector score as of `msAgo` milliseconds back, for the acceleration term.
+   *
+   * When the worker has not been running for the full lookback there is no
+   * sample that old. Rather than reporting zero acceleration — which would
+   * blind the ranking during exactly the first minutes of a session, when
+   * detecting a move earliest matters most — the oldest available sample is
+   * used, provided history spans at least `minSpanMs`. Below that the past is
+   * genuinely unknown and null is returned.
    */
-  async readHistoricalScore(sectorId: string, msAgo: number, now = Date.now()): Promise<number | null> {
+  async readHistoricalScore(
+    sectorId: string,
+    msAgo: number,
+    now = Date.now(),
+    minSpanMs = 45_000,
+  ): Promise<number | null> {
     const members = await this.redis.zrange(KEYS.sectorHistory(sectorId), 0, -1);
     if (!members.length) return null;
+
+    const samples = members
+      .map((member) => {
+        const [ts, score] = member.split(':').map(Number);
+        return { ts, score };
+      })
+      .filter((sample) => Number.isFinite(sample.ts) && Number.isFinite(sample.score));
+    if (!samples.length) return null;
+
     const cutoff = now - msAgo;
     let best: { ts: number; score: number } | null = null;
-    for (const member of members) {
-      const [ts, score] = member.split(':').map(Number);
-      if (ts <= cutoff && (!best || ts > best.ts)) best = { ts, score };
+    for (const sample of samples) {
+      if (sample.ts <= cutoff && (!best || sample.ts > best.ts)) best = sample;
     }
-    return best?.score ?? null;
+    if (best) return best.score;
+
+    // Not enough history for the full window: fall back to the oldest sample.
+    const oldest = samples.reduce((a, b) => (a.ts < b.ts ? a : b));
+    return now - oldest.ts >= minSpanMs ? oldest.score : null;
   }
 
   // -------------------------------------------------------------------------

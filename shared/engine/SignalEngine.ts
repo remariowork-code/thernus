@@ -26,6 +26,12 @@ function signalId(prefix: string): string {
 const pct = (n: number): string => `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`;
 const rvolText = (n: number): string => `${n.toFixed(1)}x`;
 
+/** "45s" / "3m" — never "0m", which reads as though nothing happened. */
+const duration = (ms: number): string => {
+  const seconds = Math.round(ms / 1000);
+  return seconds < 90 ? `${seconds}s` : `${Math.round(seconds / 60)}m`;
+};
+
 /** Sector stage -> the signal type and severity that announce it. */
 const SECTOR_STAGE_SIGNAL: Record<Stage, { type: SignalType; severity: SignalSeverity } | null> = {
   IDLE: null,
@@ -48,10 +54,21 @@ export class SignalEngine {
   private recentCatalysts: Map<string, NewsHeadline>;
 
   /** Per-symbol memory for the stock-level detectors. */
-  private readonly lastStockScore = new Map<string, { score: number; at: number }>();
+  /**
+   * A short rolling score history per symbol.
+   *
+   * Acceleration is defined over a window, so comparing against the previous
+   * evaluation — which is one tick, often a single second — measures jitter
+   * rather than a trend, and reports it as "score +16 in 1s".
+   */
+  private readonly scoreHistory = new Map<string, Array<{ score: number; at: number }>>();
   private readonly lastAboveVwap = new Map<string, boolean>();
   private readonly announcedHighs = new Map<string, number>();
   private readonly announcedVolumeSpike = new Map<string, number>();
+  /** Symbols currently above the momentum threshold, so re-crossing is not re-news. */
+  private readonly momentumArmed = new Set<string>();
+  private readonly announcedMomentumStart = new Map<string, number>();
+  private readonly announcedMomentumAccel = new Map<string, number>();
 
   constructor(deps: SignalEngineDeps) {
     this.config = deps.config;
@@ -253,35 +270,66 @@ export class SignalEngine {
       createdAt: new Date(now).toISOString(),
     });
 
-    const previous = this.lastStockScore.get(m.symbol);
     const { stock } = this.config;
+    const windowMs = stock.momentumAccelWindowMinutes * 60_000;
 
-    // MOMENTUM_START — score crosses the threshold from below.
-    if (
-      m.momentumScore >= stock.momentumStartScore &&
-      (!previous || previous.score < stock.momentumStartScore)
-    ) {
-      out.push(make(
-        'MOMENTUM_START', 'LOW', m.momentumScore, previous?.score ?? null,
-        `${m.symbol} momentum building: score ${m.momentumScore.toFixed(0)}, ${pct(m.changePercent)} on ${rvolText(m.rvol)} volume.`,
-      ));
+    const history = this.scoreHistory.get(m.symbol) ?? [];
+    // Everything still inside the window, oldest first.
+    const inWindow = history.filter((sample) => now - sample.at <= windowMs);
+    const previous = inWindow[0];
+    const lastSample = history[history.length - 1];
+
+    // MOMENTUM_START — the upward crossing, once.
+    //
+    // Guarded two ways. A hysteresis band means the score must drop well back
+    // below the threshold before this can fire again, so a stock hovering at
+    // the boundary does not emit on every tick; and a cooldown bounds it even
+    // if the score does genuinely round-trip.
+    const armed = this.momentumArmed.has(m.symbol);
+    if (m.momentumScore >= stock.momentumStartScore && !armed) {
+      this.momentumArmed.add(m.symbol);
+      const lastAt = this.announcedMomentumStart.get(m.symbol) ?? 0;
+      if (now - lastAt > this.config.dedup.cooldownMs) {
+        this.announcedMomentumStart.set(m.symbol, now);
+        out.push(make(
+          'MOMENTUM_START', 'LOW', m.momentumScore, previous?.score ?? null,
+          `${m.symbol} momentum building: score ${m.momentumScore.toFixed(0)}, ${pct(m.changePercent)} on ${rvolText(m.rvol)} volume.`,
+        ));
+      }
+    } else if (armed && m.momentumScore < stock.momentumStartScore - stock.momentumStartHysteresis) {
+      this.momentumArmed.delete(m.symbol);
     }
 
     // MOMENTUM_ACCELERATION — a large score gain inside the window.
+    //
+    // Cooled down like the others: a stock climbing steadily satisfies this on
+    // every evaluation, and the feed fills with the same claim about the same
+    // symbol seconds apart.
+    // Requires a real span of observation, not just two adjacent ticks.
+    const MIN_SPAN_MS = 30_000;
     if (previous) {
-      const elapsedMin = (now - previous.at) / 60_000;
+      const elapsedMs = now - previous.at;
       const delta = m.momentumScore - previous.score;
+      const lastAt = this.announcedMomentumAccel.get(m.symbol) ?? 0;
       if (
-        elapsedMin <= stock.momentumAccelWindowMinutes &&
-        delta >= stock.momentumAccelDelta
+        elapsedMs >= MIN_SPAN_MS &&
+        delta >= stock.momentumAccelDelta &&
+        now - lastAt > this.config.dedup.cooldownMs
       ) {
+        this.announcedMomentumAccel.set(m.symbol, now);
         out.push(make(
           'MOMENTUM_ACCELERATION', 'MEDIUM', m.momentumScore, previous.score,
-          `${m.symbol} accelerating: score +${delta.toFixed(0)} in ${elapsedMin.toFixed(0)}m to ${m.momentumScore.toFixed(0)}, now ${pct(m.changePercent)}.`,
+          `${m.symbol} accelerating: score +${delta.toFixed(0)} in ${duration(elapsedMs)} to ${m.momentumScore.toFixed(0)}, now ${pct(m.changePercent)}.`,
         ));
       }
     }
-    this.lastStockScore.set(m.symbol, { score: m.momentumScore, at: now });
+    // Sampled sparsely — one point every few seconds is plenty for a
+    // five-minute window, and keeps this bounded across 250 symbols.
+    if (!lastSample || now - lastSample.at >= 5_000) {
+      this.scoreHistory.set(m.symbol, [...inWindow, { score: m.momentumScore, at: now }]);
+    } else {
+      this.scoreHistory.set(m.symbol, inWindow.length ? inWindow : [{ score: m.momentumScore, at: now }]);
+    }
 
     // VOLUME_SPIKE — rate limited, since RVOL stays elevated once it spikes.
     if (m.rvol >= stock.volumeSpikeRvol) {

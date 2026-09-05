@@ -7,9 +7,16 @@
  * turns a worker restart into a request storm. This closes the socket on error
  * and reconnects with exponential backoff plus jitter instead.
  *
- * State is held in refs and flushed on an animation frame: a busy open can
- * deliver hundreds of metric updates a second, and calling setState on each
- * one would spend the whole frame budget in React rather than painting.
+ * State is held in refs and flushed on a throttle: a busy open can deliver
+ * hundreds of metric updates a second, and calling setState on each one would
+ * spend the whole frame budget in React rather than painting.
+ *
+ * The throttle is a timer, deliberately not requestAnimationFrame. rAF does
+ * not fire in a hidden or backgrounded tab, so an rAF-based flush leaves the
+ * buffer filling and React never updated — a dashboard left on a second
+ * monitor, or opened in a background tab, would show stale or empty data with
+ * a healthy-looking connection indicator. A timer keeps updating regardless,
+ * and 12Hz is far more resolution than a table of numbers needs.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -24,6 +31,8 @@ const MAX_RETRY_MS = 30_000;
 const BACKOFF_FACTOR = 2;
 const MAX_SIGNALS = 200;
 const MAX_NEWS = 100;
+/** ~12 updates a second; the browser still paints at its own rate. */
+const FLUSH_INTERVAL_MS = 80;
 
 export interface MarketFeed {
   connection: ConnectionState;
@@ -60,12 +69,12 @@ export function useSSE(url = '/api/stream'): MarketFeed {
     dirty: false,
   });
 
-  const frame = useRef<number | null>(null);
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const scheduleFlush = useCallback(() => {
-    if (frame.current !== null) return;
-    frame.current = requestAnimationFrame(() => {
-      frame.current = null;
+    if (flushTimer.current !== null) return;
+    flushTimer.current = setTimeout(() => {
+      flushTimer.current = null;
       if (!buffer.current.dirty) return;
       buffer.current.dirty = false;
       setFeed((previous) => ({
@@ -78,7 +87,7 @@ export function useSSE(url = '/api/stream'): MarketFeed {
         news: buffer.current.news,
         latestSignal: buffer.current.latestSignal,
       }));
-    });
+    }, FLUSH_INTERVAL_MS);
   }, []);
 
   useEffect(() => {
@@ -163,7 +172,10 @@ export function useSSE(url = '/api/stream'): MarketFeed {
     return () => {
       mounted = false;
       if (retryTimer) clearTimeout(retryTimer);
-      if (frame.current !== null) cancelAnimationFrame(frame.current);
+      if (flushTimer.current !== null) {
+        clearTimeout(flushTimer.current);
+        flushTimer.current = null;
+      }
       source?.close();
     };
   }, [url, scheduleFlush]);

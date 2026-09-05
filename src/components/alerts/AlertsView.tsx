@@ -30,7 +30,7 @@ interface AlertsPayload {
 
 export function AlertsView() {
   const feed = useSSE();
-  const alerts = useAlerts(feed.latestSignal);
+  const alerts = useAlerts(feed.latestSignal, feed.signals);
 
   const { data, isError } = useQuery<AlertsPayload>({
     queryKey: ['alerts'],

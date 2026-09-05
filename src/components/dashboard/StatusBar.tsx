@@ -12,7 +12,6 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { MarketSession } from '@shared/types';
 import type { ConnectionState } from '@/hooks/useSSE';
-import { marketClock } from '@/lib/format';
 import { cn } from '@/components/ui/primitives';
 
 const SESSION_LABEL: Record<MarketSession, string> = {

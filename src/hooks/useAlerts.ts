@@ -4,49 +4,32 @@
  * Browser alert delivery.
  *
  * Signals are already deduplicated server-side by the state machine, so this
- * layer only decides *whether the user wants to hear about it* and raises the
- * notification. It deliberately keeps its own seen-set as well: a reconnect
- * replays recent signals for hydration, and those must not re-fire as alerts.
+ * layer only decides whether the user wants to hear about a given signal, and
+ * raises the notification.
  *
- * Preferences live in localStorage rather than the database — they are
- * per-device by nature (this browser's notification permission, this machine's
- * speakers) and must work before any database is configured.
+ * The delivered list is *derived* from the signal feed rather than accumulated
+ * in state: the feed is already the source of truth, and mirroring it into
+ * state inside an effect would mean two copies that can disagree. The effect
+ * here does only what an effect is for — the imperative side effects (a chime,
+ * an OS notification), and never a setState.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import type { Signal, SignalSeverity } from '@shared/types';
+import {
+  DEFAULT_PREFERENCES, getPermissionServerSnapshot, getPermissionSnapshot,
+  getServerSnapshot, getSnapshot, notifyPermissionChanged, subscribe,
+  subscribePermission, updatePreferences,
+  type AlertPreferences, type PermissionState,
+} from '@/lib/alertPreferences';
 
-const STORAGE_KEY = 'marketpulse.alerts.v1';
 const SEVERITY_RANK: Record<SignalSeverity, number> = {
   INFO: 0, LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4,
 };
 
-export interface AlertPreferences {
-  enabled: boolean;
-  sound: boolean;
-  /** Only signals at or above this severity are delivered. */
-  minSeverity: SignalSeverity;
-  /** Suppress stock-level noise and alert on sector events only. */
-  sectorOnly: boolean;
-}
+const MAX_DELIVERED = 50;
 
-const DEFAULTS: AlertPreferences = {
-  enabled: false,
-  sound: true,
-  minSeverity: 'MEDIUM',
-  sectorOnly: true,
-};
-
-function loadPreferences(): AlertPreferences {
-  if (typeof window === 'undefined') return DEFAULTS;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : DEFAULTS;
-  } catch {
-    // Private browsing, or storage disabled entirely.
-    return DEFAULTS;
-  }
-}
+export type { AlertPreferences };
 
 /** A short two-tone chime, synthesised so there is no asset to ship or 404. */
 function playChime(): void {
@@ -82,58 +65,57 @@ function playChime(): void {
 export interface AlertsApi {
   preferences: AlertPreferences;
   update(patch: Partial<AlertPreferences>): void;
-  permission: NotificationPermission | 'unsupported';
+  permission: PermissionState;
   requestPermission(): Promise<void>;
-  /** Alerts raised this session, newest first. */
+  /** Signals that met the alert criteria, newest first. */
   delivered: Signal[];
 }
 
-export function useAlerts(latestSignal: Signal | null): AlertsApi {
-  const [preferences, setPreferences] = useState<AlertPreferences>(DEFAULTS);
-  const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>('default');
-  const [delivered, setDelivered] = useState<Signal[]>([]);
-  const seen = useRef(new Set<string>());
+/**
+ * @param latestSignal The most recent signal, used to fire side effects once.
+ * @param signals      The full feed, from which the delivered list is derived.
+ */
+export function useAlerts(latestSignal: Signal | null, signals: Signal[] = []): AlertsApi {
+  const preferences = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const permission = useSyncExternalStore(
+    subscribePermission, getPermissionSnapshot, getPermissionServerSnapshot,
+  );
 
-  // Read stored preferences after mount, so server and client first paint match.
-  useEffect(() => {
-    setPreferences(loadPreferences());
-    setPermission(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
-  }, []);
+  // Signals already announced, so a reconnect's hydration replay is silent.
+  const announced = useRef(new Set<string>());
+
+  const qualifies = useCallback((signal: Signal): boolean => {
+    if (SEVERITY_RANK[signal.severity] < SEVERITY_RANK[preferences.minSeverity]) return false;
+    if (preferences.sectorOnly && signal.symbol !== null) return false;
+    return true;
+  }, [preferences.minSeverity, preferences.sectorOnly]);
+
+  const delivered = useMemo(
+    () => (preferences.enabled ? signals.filter(qualifies).slice(0, MAX_DELIVERED) : []),
+    [preferences.enabled, signals, qualifies],
+  );
 
   const update = useCallback((patch: Partial<AlertPreferences>) => {
-    setPreferences((previous) => {
-      const next = { ...previous, ...patch };
-      try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        // Non-persistent is still usable for this session.
-      }
-      return next;
-    });
+    updatePreferences(patch);
   }, []);
 
   const requestPermission = useCallback(async () => {
     if (typeof Notification === 'undefined') return;
     const result = await Notification.requestPermission();
-    setPermission(result);
-    if (result === 'granted') update({ enabled: true });
-  }, [update]);
+    notifyPermissionChanged();
+    if (result === 'granted') updatePreferences({ enabled: true });
+  }, []);
 
+  // Side effects only: no state is written here.
   useEffect(() => {
     if (!latestSignal) return;
-
-    // Hydration replays recent signals; only ever alert once per signal id.
-    if (seen.current.has(latestSignal.id)) return;
-    seen.current.add(latestSignal.id);
-    if (seen.current.size > 1_000) {
-      seen.current = new Set([...seen.current].slice(-500));
+    if (announced.current.has(latestSignal.id)) return;
+    announced.current.add(latestSignal.id);
+    if (announced.current.size > 1_000) {
+      announced.current = new Set([...announced.current].slice(-500));
     }
 
-    if (!preferences.enabled) return;
-    if (SEVERITY_RANK[latestSignal.severity] < SEVERITY_RANK[preferences.minSeverity]) return;
-    if (preferences.sectorOnly && latestSignal.symbol !== null) return;
-
-    setDelivered((previous) => [latestSignal, ...previous].slice(0, 50));
+    if (!preferences.enabled || !qualifies(latestSignal)) return;
 
     if (preferences.sound) playChime();
 
@@ -148,7 +130,9 @@ export function useAlerts(latestSignal: Signal | null): AlertsApi {
         // Some browsers reject constructed notifications outside a worker.
       }
     }
-  }, [latestSignal, preferences]);
+  }, [latestSignal, preferences.enabled, preferences.sound, qualifies]);
 
   return { preferences, update, permission, requestPermission, delivered };
 }
+
+export { DEFAULT_PREFERENCES };

@@ -332,3 +332,125 @@ describe('catalyst correlation — "moving" vs "moving because"', () => {
     expect(engine.catalystSignal(news, sector({ score: 20 }))).toBeNull();
   });
 });
+
+describe('momentum threshold hysteresis', () => {
+  /**
+   * Regression: a score hovering at the threshold re-fired MOMENTUM_START on
+   * every upward crossing. One symbol produced 25 identical alerts in five
+   * minutes — the exact failure the spec's state machine exists to prevent.
+   */
+  it('does not re-fire while a score oscillates around the threshold', () => {
+    const engine = new SignalEngine({
+      config: DEFAULT_CONFIG, deduplicator: new SignalDeduplicator(DEFAULT_CONFIG),
+    });
+    const t0 = Date.now();
+    const threshold = DEFAULT_CONFIG.stock.momentumStartScore;
+
+    let fired = 0;
+    // Wobble either side of the threshold for five minutes.
+    for (let i = 0; i < 300; i++) {
+      const score = threshold + (i % 2 === 0 ? 2 : -2);
+      const signals = engine.evaluateStock(
+        stock('MCHP', { momentumScore: score }), 's', 'S', 'REGULAR', t0 + i * 1000,
+      );
+      fired += signals.filter((s) => s.type === 'MOMENTUM_START').length;
+    }
+
+    expect(fired).toBe(1);
+  });
+
+  it('re-arms only after the score falls clear of the hysteresis band', () => {
+    const engine = new SignalEngine({
+      config: DEFAULT_CONFIG, deduplicator: new SignalDeduplicator(DEFAULT_CONFIG),
+    });
+    const t0 = Date.now();
+    const { momentumStartScore, momentumStartHysteresis } = DEFAULT_CONFIG.stock;
+
+    const fire = (score: number, at: number) =>
+      engine.evaluateStock(stock('MU', { momentumScore: score }), 's', 'S', 'REGULAR', at)
+        .some((s) => s.type === 'MOMENTUM_START');
+
+    expect(fire(momentumStartScore + 5, t0)).toBe(true);
+
+    // Falling only just below the threshold does not re-arm it.
+    fire(momentumStartScore - 2, t0 + 60_000);
+    expect(fire(momentumStartScore + 5, t0 + 120_000)).toBe(false);
+
+    // Falling clear of the band does — after the cooldown.
+    fire(momentumStartScore - momentumStartHysteresis - 5, t0 + 180_000);
+    expect(fire(momentumStartScore + 5, t0 + 400_000)).toBe(true);
+  });
+});
+
+describe('momentum acceleration', () => {
+  it('is rate limited for a stock that climbs steadily', () => {
+    const engine = new SignalEngine({
+      config: DEFAULT_CONFIG, deduplicator: new SignalDeduplicator(DEFAULT_CONFIG),
+    });
+    const t0 = Date.now();
+
+    let fired = 0;
+    // A score marching from 20 to 95 over two minutes, evaluated every second.
+    for (let i = 0; i <= 120; i++) {
+      const signals = engine.evaluateStock(
+        stock('GFS', { momentumScore: 20 + i * 0.625 }), 's', 'S', 'REGULAR', t0 + i * 1000,
+      );
+      fired += signals.filter((s) => s.type === 'MOMENTUM_ACCELERATION').length;
+    }
+
+    expect(fired).toBeLessThanOrEqual(1);
+  });
+
+  it('phrases sub-minute intervals in seconds, never as "0m"', () => {
+    const engine = new SignalEngine({
+      config: DEFAULT_CONFIG, deduplicator: new SignalDeduplicator(DEFAULT_CONFIG),
+    });
+    const t0 = Date.now();
+    engine.evaluateStock(stock('MU', { momentumScore: 30 }), 's', 'S', 'REGULAR', t0);
+    const signal = engine.evaluateStock(
+      stock('MU', { momentumScore: 70 }), 's', 'S', 'REGULAR', t0 + 40_000,
+    ).find((s) => s.type === 'MOMENTUM_ACCELERATION')!;
+
+    expect(signal.headline).toContain('40s');
+    expect(signal.headline).not.toContain('0m');
+  });
+});
+
+describe('acceleration is measured over a window, not between ticks', () => {
+  /**
+   * Regression: the detector compared each evaluation with the immediately
+   * previous one, so a one-second jump reported "score +16 in 1s" — jitter
+   * dressed up as a trend.
+   */
+  it('ignores a large jump between two adjacent evaluations', () => {
+    const engine = new SignalEngine({
+      config: DEFAULT_CONFIG, deduplicator: new SignalDeduplicator(DEFAULT_CONFIG),
+    });
+    const t0 = Date.now();
+    engine.evaluateStock(stock('TSM', { momentumScore: 40 }), 's', 'S', 'REGULAR', t0);
+    const out = engine.evaluateStock(stock('TSM', { momentumScore: 80 }), 's', 'S', 'REGULAR', t0 + 1_000);
+    expect(out.some((s) => s.type === 'MOMENTUM_ACCELERATION')).toBe(false);
+  });
+
+  it('reports the span actually observed', () => {
+    const engine = new SignalEngine({
+      config: DEFAULT_CONFIG, deduplicator: new SignalDeduplicator(DEFAULT_CONFIG),
+    });
+    const t0 = Date.now();
+
+    // Sampled every 10 seconds, climbing slowly, over three minutes.
+    let signal;
+    for (let i = 0; i <= 18; i++) {
+      const found = engine.evaluateStock(
+        stock('MU', { momentumScore: 40 + i * 2 }), 's', 'S', 'REGULAR', t0 + i * 10_000,
+      ).find((s) => s.type === 'MOMENTUM_ACCELERATION');
+      if (found && !signal) signal = found;
+    }
+
+    expect(signal).toBeDefined();
+    // The gain is real and spans minutes, not one tick.
+    expect(signal!.headline).toMatch(/in \d+[ms]/);
+    expect(signal!.headline).not.toMatch(/in [0-9]s\b/);
+    expect(signal!.previousValue).toBeLessThan(signal!.score - DEFAULT_CONFIG.stock.momentumAccelDelta + 1);
+  });
+});

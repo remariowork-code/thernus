@@ -98,6 +98,12 @@ export interface MarketPulseConfig {
   stock: {
     /** MOMENTUM_START fires when score crosses this upward. */
     momentumStartScore: number;
+    /**
+     * The score must fall this far back below the threshold before
+     * MOMENTUM_START can arm again. Without a hysteresis band a score sitting
+     * near the threshold oscillates across it and re-fires every few seconds.
+     */
+    momentumStartHysteresis: number;
     /** MOMENTUM_ACCELERATION fires on this much score gain inside the window. */
     momentumAccelDelta: number;
     momentumAccelWindowMinutes: number;
@@ -107,6 +113,12 @@ export interface MarketPulseConfig {
     vwapBreakMinRvol: number;
     /** A high counts as "new" for this long. */
     newHighWindowMs: number;
+    /** Momentum score at which a stock is reported as AWAKENING. */
+    stageAwakeningScore: number;
+    /** ...as ACCELERATING. */
+    stageAcceleratingScore: number;
+    /** ...as BREAKOUT, which also requires a new intraday high. */
+    stageBreakoutScore: number;
   };
   session: {
     /** Move thresholds are multiplied by this outside regular hours. */
@@ -235,11 +247,15 @@ export const DEFAULT_CONFIG: MarketPulseConfig = {
   },
   stock: {
     momentumStartScore: 55,
+    momentumStartHysteresis: 8,
     momentumAccelDelta: 15,
     momentumAccelWindowMinutes: 5,
     volumeSpikeRvol: 2.5,
     vwapBreakMinRvol: 1.5,
     newHighWindowMs: 60_000,
+    stageAwakeningScore: 45,
+    stageAcceleratingScore: 60,
+    stageBreakoutScore: 75,
   },
   session: {
     extendedHoursMultiplier: 1.5,

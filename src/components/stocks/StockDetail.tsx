@@ -11,6 +11,8 @@
 import Link from 'next/link';
 import { useMemo } from 'react';
 import { useSSE } from '@/hooks/useSSE';
+import { useSignalHistory } from '@/hooks/useSignalHistory';
+import { useCallback } from 'react';
 import { changeClass, compactVolume, pct, price, rvol } from '@/lib/format';
 import type { StockMetrics } from '@shared/types';
 import { LiveSignalFeed } from '@/components/dashboard/LiveSignalFeed';
@@ -28,10 +30,17 @@ export function StockDetail({
   const feed = useSSE();
   const metrics = feed.metrics.get(symbol) ?? initial;
 
-  const signals = useMemo(
-    () => feed.signals.filter((s) => s.symbol === symbol
-      || (s.symbol === null && s.sectorId !== null && sectors.some((sec) => sec.id === s.sectorId))),
-    [feed.signals, symbol, sectors],
+  const sectorIds = useMemo(() => sectors.map((s) => s.id), [sectors]);
+  const signals = useSignalHistory(
+    feed.signals,
+    useCallback(
+      // The stock's own signals, plus sector-level calls for any sector it
+      // belongs to — a name only means something in its sector's context.
+      (s) => s.symbol === symbol
+        || (s.symbol === null && s.sectorId !== null && sectorIds.includes(s.sectorId)),
+      [symbol, sectorIds],
+    ),
+    { limit: 150 },
   );
 
   const news = feed.news.filter((n) => n.symbols.includes(symbol));

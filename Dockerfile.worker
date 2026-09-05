@@ -1,0 +1,35 @@
+# The market worker.
+#
+# Deployed separately from the Next.js app — on Railway, Fly.io, or any
+# platform that runs a long-lived process. It must not run on Vercel: a
+# market-data WebSocket cannot survive inside a serverless function.
+
+FROM node:22-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+FROM node:22-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json ./
+COPY prisma ./prisma
+COPY prisma.config.ts ./
+COPY shared ./shared
+COPY worker ./worker
+COPY src/lib/prisma.ts ./src/lib/prisma.ts
+COPY tsconfig.json ./
+
+# The Prisma client is generated at build time so the image needs no schema
+# work at boot.
+RUN npx prisma generate
+
+# Never run as root.
+USER node
+
+# The worker has no inbound port; liveness is the process itself. It exits
+# non-zero when its reconnect budget is exhausted, so the orchestrator restarts
+# it with clean state.
+CMD ["npx", "tsx", "worker/src/index.ts"]
