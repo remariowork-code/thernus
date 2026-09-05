@@ -26,10 +26,31 @@ MSG
   exit 1
 fi
 
-set -a
-# shellcheck disable=SC1091
-source .env.worker
-set +a
+# Parse rather than `source`.
+#
+# Connection strings routinely contain shell metacharacters — a Neon URL ends
+# "?channel_binding=require&sslmode=require", and `&` is a command separator,
+# so sourcing silently assigns an empty string and the worker falls back to the
+# seed universe while reporting no error. Splitting on the first `=` and
+# exporting the remainder verbatim avoids interpreting the value at all.
+while IFS= read -r line || [[ -n "$line" ]]; do
+  line="${line#"${line%%[![:space:]]*}"}"          # strip leading whitespace
+  [[ -z "$line" || "$line" == '#'* ]] && continue
+  [[ "$line" == *=* ]] || continue
+
+  key="${line%%=*}"
+  value="${line#*=}"
+
+  # Only accept well-formed names, so a malformed file cannot export nonsense.
+  [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+
+  # Strip one layer of matching quotes, if present.
+  if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
+    value="${value:1:${#value}-2}"
+  fi
+
+  export "$key=$value"
+done < .env.worker
 
 : "${REDIS_URL:?REDIS_URL is required — without it the worker writes to memory that Vercel cannot read}"
 
