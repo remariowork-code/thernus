@@ -133,6 +133,17 @@ vercel deploy
 Run exactly one worker. Two against the same Redis would double every signal and
 race on the state machine; scale by sharding the symbol universe instead.
 
+### The worker and the app must share one Redis
+
+This is the single most common way to end up with a healthy-looking system and
+an empty dashboard: the worker writes to one Redis and the app reads another.
+Nothing errors, because both connections succeed.
+
+Both report the host they are using — the worker on startup, the app at
+`/api/health` as `redisHost`. If those two strings differ, that is the bug.
+A project with more than one Redis integration attached (`REDIS_URL` and
+`upstash_REDIS_URL`, say) makes this easy to do by accident.
+
 ### Where the worker runs
 
 The worker needs a long-lived process. It does not need a *server* — it accepts

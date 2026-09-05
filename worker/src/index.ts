@@ -23,6 +23,17 @@ import { MarketPipeline } from './pipeline/MarketPipeline';
 import { NullSignalSink, PrismaSignalSink } from './pipeline/PrismaSignalSink';
 import { Logger } from './utils/logger';
 
+/** Host only — never the password embedded in the connection string. */
+function redisHost(): string | null {
+  const url = process.env.REDIS_URL ?? process.env.UPSTASH_REDIS_URL;
+  if (!url) return null;
+  try {
+    return new URL(url).host;
+  } catch {
+    return 'unparseable';
+  }
+}
+
 const MAX_RETRIES = Number(process.env.WORKER_MAX_RETRIES ?? 10);
 const STALL_TIMEOUT_MS = Number(process.env.WORKER_STALL_TIMEOUT_MS ?? 30_000);
 const HEALTH_INTERVAL_MS = 5_000;
@@ -33,6 +44,9 @@ async function main(): Promise<void> {
   Logger.info('MarketPulse worker starting', {
     provider: resolveProviderName(),
     redis: usingMemoryFallback() ? 'in-process (no REDIS_URL)' : 'external',
+    // The host, so a mismatch with the web app's Redis is visible at a glance
+    // rather than deduced from an empty dashboard. Credentials stripped.
+    redisHost: redisHost(),
     database: process.env.DATABASE_URL ? 'configured' : 'none',
   });
 
