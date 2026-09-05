@@ -57,6 +57,27 @@ describe('AlpacaProvider — snapshot mapping', () => {
     expect(snapshot.timestamp).toBe(Date.parse('2026-09-08T17:45:12.123Z'));
   });
 
+  it('reads the top-level symbol map the multi-snapshot endpoint returns', async () => {
+    // Alpaca keys this response by symbol directly, with no wrapper. Reading a
+    // `snapshots` key that is not there empties the cache and silently
+    // collapses batching back to one request per symbol.
+    mockFetch([{
+      match: /\/snapshots/,
+      body: {
+        MU: {
+          latestTrade: { p: 104.25, t: '2026-09-08T17:45:12Z' },
+          dailyBar: { t: '', o: 100, h: 105, l: 99.5, c: 104.25, v: 8_400_000, vw: 102.4 },
+          prevDailyBar: { t: '', o: 98, h: 101, l: 97, c: 100, v: 7_000_000, vw: 99 },
+        },
+      },
+    }]);
+
+    const provider = new AlpacaProvider({ ...credentials, symbols: ['MU'] });
+    const snapshot = await provider.getSnapshot('MU');
+    expect(snapshot.previousClose).toBe(100);
+    expect(snapshot.lastPrice).toBe(104.25);
+  });
+
   it('batches the whole universe into one request rather than one per symbol', async () => {
     const symbols = Array.from({ length: 40 }, (_, i) => `S${i}`);
     const snapshots = Object.fromEntries(symbols.map((s) => [s, {
@@ -64,6 +85,7 @@ describe('AlpacaProvider — snapshot mapping', () => {
       dailyBar: { t: '', o: 10, h: 10, l: 10, c: 10, v: 100, vw: 10 },
       prevDailyBar: { t: '', o: 9, h: 9, l: 9, c: 9, v: 100, vw: 9 },
     }]));
+    // Wrapped shape still accepted, so either response works.
     const { calls } = mockFetch([{ match: /\/snapshots/, body: { snapshots } }]);
 
     const provider = new AlpacaProvider({ ...credentials, symbols });

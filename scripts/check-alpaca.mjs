@@ -14,9 +14,14 @@ import WebSocket from 'ws';
 
 // --- credentials ------------------------------------------------------------
 
-let env = {};
+/**
+ * Credentials come from .env.worker, or from the environment when it is
+ * absent — so this runs in CI, and can be run once without leaving a copy of
+ * the keys on disk.
+ */
+let fileEnv = {};
 try {
-  env = Object.fromEntries(
+  fileEnv = Object.fromEntries(
     readFileSync(new URL('../.env.worker', import.meta.url), 'utf8')
       .split('\n')
       .map((l) => l.trim())
@@ -27,9 +32,11 @@ try {
       }),
   );
 } catch {
-  console.error('Could not read .env.worker. Copy .env.example to .env.worker and fill it in.');
-  process.exit(1);
+  // No file is fine; the environment may carry the values instead.
 }
+
+// Environment wins, so a one-off run can override whatever is on disk.
+const env = { ...fileEnv, ...process.env };
 
 const KEY = env.ALPACA_API_KEY_ID;
 const SECRET = env.ALPACA_API_SECRET_KEY;

@@ -6,9 +6,10 @@
  * about because they shape how this is configured:
  *
  *  - The free "Basic" plan streams the IEX feed only, and caps a websocket
- *    subscription at 30 symbols. IEX is roughly 2-3% of consolidated volume,
- *    so RVOL computed from it is a sample, not the tape. That is a real
- *    limitation, surfaced loudly rather than hidden.
+ *    subscription at exactly 30 symbols — verified against the live API: 30 is
+ *    accepted, 31 returns error 405. IEX is roughly 2-3% of consolidated
+ *    volume, so RVOL computed from it is a sample, not the tape. Both are real
+ *    limitations, surfaced loudly rather than hidden.
  *  - Only one websocket connection is permitted per account. A second worker
  *    does not degrade; it is refused.
  *
@@ -364,16 +365,28 @@ export class AlpacaProvider implements IMarketDataProvider {
       const CHUNK = 100;
       for (let i = 0; i < this.universe.length; i += CHUNK) {
         const chunk = this.universe.slice(i, i + CHUNK);
-        const res = await this.rest<{ snapshots?: Record<string, AlpacaSnapshot> }>(
+        const res = await this.rest<Record<string, unknown>>(
           '/snapshots', { symbols: chunk.join(','), feed: this.feed },
         );
-        for (const [symbol, snapshot] of Object.entries(res.snapshots ?? {})) {
-          cache.set(symbol, snapshot);
+
+        // The multi-symbol endpoint keys the response by symbol at the top
+        // level. Older and single-symbol responses nest under `snapshots`, so
+        // both shapes are accepted — reading the wrong one silently empties
+        // the cache and collapses this back to one request per symbol.
+        const payload = (res.snapshots ?? res) as Record<string, AlpacaSnapshot>;
+        for (const [symbol, snapshot] of Object.entries(payload)) {
+          if (snapshot && typeof snapshot === 'object') cache.set(symbol, snapshot);
         }
       }
 
       this.snapshotCache = cache;
-      Logger.info('Alpaca snapshots loaded', { symbols: cache.size, feed: this.feed });
+      if (cache.size < this.universe.length) {
+        Logger.warn('Alpaca returned fewer snapshots than requested', {
+          requested: this.universe.length, returned: cache.size,
+        });
+      } else {
+        Logger.info('Alpaca snapshots loaded', { symbols: cache.size, feed: this.feed });
+      }
       return cache;
     })();
 

@@ -106,6 +106,11 @@ Relative comparisons between symbols still hold on IEX, which is what breadth
 and sector ranking depend on. Absolute RVOL does not — it is a sample ratio.
 `ALPACA_FEED=sip` on a paid plan lifts both constraints.
 
+The 30-symbol cap is exact, verified against the live API: 30 symbols are
+accepted, 31 returns `405 symbol limit exceeded`. Check any plan's real limits
+with `node scripts/check-alpaca.mjs`, which subscribes to the configured
+universe and reports how many symbols were actually accepted.
+
 **Polygon/Massive** needs a plan that includes stock websocket access. The free
 tier serves historical aggregates but refuses the live stream, which no amount
 of code works around.
