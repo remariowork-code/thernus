@@ -23,15 +23,27 @@ if ! { exec 3< /dev/tty; } 2>/dev/null; then
 fi
 exec 3<&-
 
-say()  { printf '\n\033[1m%s\033[0m\n' "$1"; }
-note() { printf '  %s\n' "$1"; }
+# Both write to stderr so they are not captured by the $( ) around ask().
+say()  { printf '\n\033[1m%s\033[0m\n' "$1" >&2; }
+note() { printf '  %s\n' "$1" >&2; }
 
-# Reuse anything already set rather than asking twice.
+# Reuse anything already on disk rather than asking twice.
+#
+# .env.local is checked as well as .env.worker: `vercel env pull` writes the
+# infrastructure connection strings there, and retyping a Redis URL by hand is
+# an easy way to introduce a typo nobody will find until the dashboard is
+# silently empty. Placeholder values are ignored.
 existing() {
-  [[ -f "$ENV_FILE" ]] || return 1
-  local v
-  v=$(grep -E "^$1=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)
-  [[ -n "$v" ]] && printf '%s' "$v"
+  local var=$1 file v
+  for file in "$ENV_FILE" ".env.local"; do
+    [[ -f "$file" ]] || continue
+    v=$(grep -E "^$var=" "$file" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true)
+    if [[ -n "$v" && "$v" != "[SENSITIVE]" ]]; then
+      printf '%s' "$v"
+      return 0
+    fi
+  done
+  return 1
 }
 
 ask() {                       # ask VAR "prompt" [secret]
@@ -39,16 +51,18 @@ ask() {                       # ask VAR "prompt" [secret]
   current=$(existing "$var" || true)
 
   if [[ -n "$current" ]]; then
-    note "$var is already set — keeping it."
+    note "$var found — reusing it."
     printf '%s' "$current"
     return
   fi
 
   if [[ -n "$secret" ]]; then
-    read -r -s -p "  $prompt: " value < /dev/tty
+    printf '  %s: ' "$prompt" >&2
+    read -r -s value < /dev/tty
     printf '\n' >&2
   else
-    read -r -p "  $prompt: " value < /dev/tty
+    printf '  %s: ' "$prompt" >&2
+    read -r value < /dev/tty
   fi
   printf '%s' "$value"
 }
@@ -61,7 +75,7 @@ say "1. Alpaca — https://alpaca.markets (Paper Trading account is enough)"
 ALPACA_ID=$(ask ALPACA_API_KEY_ID "Alpaca Key ID (starts PK)")
 ALPACA_SECRET=$(ask ALPACA_API_SECRET_KEY "Alpaca Secret Key" secret)
 
-say "2. Shared state — Vercel dashboard > Storage > .env.local tab"
+say "2. Shared state — reused from .env.local where present"
 REDIS=$(ask REDIS_URL "REDIS_URL (Upstash, starts rediss://)" secret)
 DB=$(ask DATABASE_URL "DATABASE_URL (Neon, starts postgresql://)" secret)
 
