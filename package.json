@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "postinstall": "prisma generate",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -59,5 +60,8 @@
     "typescript": "^5",
     "vitest": "^5.0.0"
   },
-  "description": "MarketPulse — a sector-first real-time stock scanner."
+  "description": "MarketPulse \u2014 a sector-first real-time stock scanner.",
+  "engines": {
+    "node": ">=22.0.0"
+  }
 }
