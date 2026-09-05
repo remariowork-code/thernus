@@ -145,9 +145,14 @@ from anywhere while the worker runs on your machine. For a scanner used during
 market hours at your desk, this is a perfectly reasonable permanent answer.
 
 ```bash
-cp .env.example .env.worker   # then fill in the five values
-./scripts/run-worker.sh
+./scripts/setup-worker.sh     # prompts for credentials, verifies, then start
+caffeinate -i ./scripts/run-worker.sh
 ```
+
+`setup-worker.sh` asks for the four values that cannot be recovered
+automatically — Vercel stores `REDIS_URL` as a Secret and will not export it —
+writes them to a gitignored file with owner-only permissions, and verifies them
+against Alpaca before you start anything.
 
 To keep it running across reboots, install the launchd job in
 `scripts/com.marketpulse.worker.plist`.
