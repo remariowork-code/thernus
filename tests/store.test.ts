@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRedisClient } from '@shared/redis/client';
 import { MarketStore } from '@shared/redis/store';
 
@@ -108,5 +108,41 @@ describe('data provenance', () => {
     // A record missing the flag must not be read as live.
     await redis.hset('market:provider', { providerName: 'MYSTERY' });
     expect((await store.readProviderInfo())!.simulated).toBe(true);
+  });
+});
+
+describe('connection safety', () => {
+  const saved = process.env.REDIS_URL;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.REDIS_URL;
+    else process.env.REDIS_URL = saved;
+    vi.restoreAllMocks();
+  });
+
+  it('warns when Redis is reached over an unencrypted public endpoint', async () => {
+    vi.resetModules();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.REDIS_URL = 'redis://default:secret@example.db.redis.io:17732';
+
+    const { createRedisClient } = await import('@shared/redis');
+    const client = createRedisClient();
+    await client.quit().catch(() => {});
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('unencrypted'));
+    // The warning must not leak the credential it is warning about.
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('secret');
+  });
+
+  it('stays quiet for a TLS endpoint and for localhost', async () => {
+    for (const url of ['rediss://default:x@host.upstash.io:6379', 'redis://127.0.0.1:6379']) {
+      vi.resetModules();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      process.env.REDIS_URL = url;
+      const { createRedisClient } = await import('@shared/redis');
+      const client = createRedisClient();
+      await client.quit().catch(() => {});
+      expect(warn).not.toHaveBeenCalled();
+      vi.restoreAllMocks();
+    }
   });
 });

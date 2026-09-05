@@ -17,7 +17,40 @@ export { IoRedisClient } from './ioredis';
  */
 export function createRedisClient(): RedisClient {
   const url = process.env.REDIS_URL ?? process.env.UPSTASH_REDIS_URL;
-  return url ? new IoRedisClient(url) : new MemoryRedisClient();
+  if (!url) return new MemoryRedisClient();
+  warnIfUnencrypted(url);
+  return new IoRedisClient(url);
+}
+
+let warnedAboutTls = false;
+
+/**
+ * A `redis://` endpoint sends AUTH — and everything after it — in cleartext.
+ * Over a public network that exposes the password to anyone on the path. Some
+ * providers hand out non-TLS endpoints by default, so this is easy to adopt
+ * without noticing.
+ */
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0']);
+
+function warnIfUnencrypted(url: string): void {
+  if (warnedAboutTls || url.startsWith('rediss://')) return;
+
+  let hostname: string;
+  try {
+    // Parsed rather than pattern-matched: a credential-less URL has no '@' to
+    // anchor on, and a password can contain almost anything.
+    hostname = new URL(url).hostname;
+  } catch {
+    return; // A malformed URL fails loudly at connect time instead.
+  }
+
+  if (LOCAL_HOSTS.has(hostname)) return;
+
+  warnedAboutTls = true;
+  console.warn(
+    '[marketpulse] REDIS_URL uses redis:// over a non-local host. The connection, ' +
+    'including the password, is unencrypted. Prefer a rediss:// endpoint.',
+  );
 }
 
 export function usingMemoryFallback(): boolean {

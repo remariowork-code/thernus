@@ -144,6 +144,12 @@ Both report the host they are using — the worker on startup, the app at
 A project with more than one Redis integration attached (`REDIS_URL` and
 `upstash_REDIS_URL`, say) makes this easy to do by accident.
 
+Use a `rediss://` endpoint. Plain `redis://` sends AUTH, and every command
+after it, in cleartext; over a public network that hands the password to
+anyone on the path. Some providers issue non-TLS endpoints by default, so
+check rather than assume — both processes warn at startup if the URL is not
+TLS and the host is not local.
+
 ### Where the worker runs
 
 The worker needs a long-lived process. It does not need a *server* — it accepts
