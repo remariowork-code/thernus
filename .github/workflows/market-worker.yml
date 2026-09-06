@@ -33,6 +33,13 @@ on:
         required: false
         default: '350'
 
+# Never two workers at once: they would double every signal and race the
+# state machine. A second run waits rather than being cancelled, so if one
+# does queue it covers the tail of the session the six-hour cap cuts off.
+concurrency:
+  group: market-worker
+  cancel-in-progress: false
+
 jobs:
   run-worker:
     runs-on: ubuntu-latest
@@ -50,12 +57,18 @@ jobs:
           ny_min=$(TZ=America/New_York date +%M)
           echo "New York time: ${ny_hour}:${ny_min}"
 
+          minutes_of_day=$((10#$ny_hour * 60 + 10#$ny_min))
+
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "proceed=true" >> "$GITHUB_OUTPUT"
-          elif [[ "$ny_hour" == "09" ]]; then
-            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "Manual run." && echo "proceed=true" >> "$GITHUB_OUTPUT"
+          # 09:00-10:15 New York. Wide enough to tolerate a late scheduled
+          # start — GitHub queues these behind paid work and they can slip by
+          # a quarter hour or more — but narrow enough that only one of the
+          # two cron entries can match on any given date.
+          elif (( minutes_of_day >= 540 && minutes_of_day <= 615 )); then
+            echo "Pre-open window." && echo "proceed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Not the pre-open window in New York; this cron entry is for the other half of the year."
+            echo "Outside the window; the other cron entry covers this half of the year."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 
