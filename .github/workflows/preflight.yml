@@ -62,7 +62,6 @@ jobs:
           ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
           ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
           ALPACA_FEED: iex
-          UNIVERSE_SECTORS: ai-infrastructure,memory
         run: npm run --silent check:alpaca
 
       - name: Redis reachable

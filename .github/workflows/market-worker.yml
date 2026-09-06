@@ -94,7 +94,6 @@ jobs:
           ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
           ALPACA_FEED: iex
           MARKET_DATA_PROVIDER: alpaca
-          UNIVERSE_SECTORS: ai-infrastructure,memory
           LOG_LEVEL: info
         run: |
           MINUTES="${{ github.event.inputs.minutes || '350' }}"

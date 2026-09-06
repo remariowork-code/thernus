@@ -134,21 +134,23 @@ tests/                   138 tests
 
 Two different operations, easily confused.
 
-**Which sectors are scanned** — the `UNIVERSE_SECTORS` environment variable. It
-is a filter, not a definition: the database still holds every sector, and this
-picks which ones the worker subscribes to. Unwatched sectors still appear on the
-dashboard, sitting permanently at `IDLE`.
+**Which sectors are scanned** — `scan.config.json`, committed at the repo root:
 
-It must agree in three places:
+```json
+{ "sectors": ["ai-infrastructure", "memory"] }
+```
 
-| File | Used by |
-|---|---|
-| `.env.worker` | a locally run worker |
-| `.github/workflows/market-worker.yml` | the scheduled worker |
-| `.github/workflows/preflight.yml` | the CI smoke test |
+One file, so the scheduled worker and a locally run one cannot disagree. Change
+it, commit, and both pick it up. An empty array scans every sector.
 
-The worker reads the universe **once, at startup**. Changing the value while it
-runs does nothing — restart it.
+It is a filter, not a definition: the database still holds every sector, and
+unwatched ones appear on the dashboard sitting permanently at `IDLE`.
+
+The `UNIVERSE_SECTORS` environment variable still overrides the file, for a
+one-off run without editing something tracked.
+
+The worker reads the universe **once, at startup**. Changing scope while it runs
+does nothing — restart it.
 
 **What a sector contains** — a database change, since the universe is
 database-driven. The seed file only populates a fresh install, and it only ever
@@ -176,14 +178,14 @@ Symbols the database has not seen get a `Stock` row automatically. The command
 reports how many symbols the sector now has, and warns if you exceed the
 provider's stream cap — which is rejected outright, not truncated.
 
-**2. Point the worker at it.** In `.env.worker`:
+**2. Point the worker at it.** Edit `scan.config.json`:
 
-```
-UNIVERSE_SECTORS=my-focus
+```json
+{ "sectors": ["my-focus"] }
 ```
 
-And the same value in the `env:` block of both workflow files, if you use the
-scheduled worker.
+Commit and push. That is the only place scope is configured — the scheduled
+worker reads the same file.
 
 **3. Restart the worker.**
 
@@ -288,7 +290,7 @@ Every variable is optional. Absent ones degrade to a documented fallback.
 
 | Variable | Meaning |
 |---|---|
-| `UNIVERSE_SECTORS` | Comma-separated sector ids. Narrows the scan |
+| `UNIVERSE_SECTORS` | Comma-separated sector ids. Overrides `scan.config.json` for one run |
 | `MARKETPULSE_CONFIG` | JSON, deep-merged over `shared/config.ts` |
 | `SUBSCRIBE_QUOTES` | Persist the NBBO feed. Off by default — see note below |
 

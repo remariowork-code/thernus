@@ -1,0 +1,4 @@
+{
+  "_comment": "Which sectors the worker subscribes to. Committed, so the scheduled worker and a local one always agree. Sector ids come from `npm run universe -- list`. Empty array means every sector. The UNIVERSE_SECTORS environment variable overrides this when set.",
+  "sectors": ["ai-infrastructure", "memory"]
+}

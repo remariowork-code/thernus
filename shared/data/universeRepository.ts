@@ -12,6 +12,7 @@
 import type { PrismaClient } from '../../generated/prisma/client';
 import type { Universe } from '../types';
 import { seedUniverse } from '../market/universe';
+import scanConfig from '../../scan.config.json';
 
 export interface UniverseSource {
   readonly kind: 'database' | 'static';
@@ -101,8 +102,13 @@ export async function loadUniverse(
   onFallback?: (reason: string) => void,
 ): Promise<{ universe: Universe; source: 'database' | 'static' }> {
   const restrict = (universe: Universe): Universe => {
-    const configured = (process.env.UNIVERSE_SECTORS ?? '')
-      .split(',').map((s) => s.trim()).filter(Boolean);
+    // scan.config.json is committed, so the scheduled worker and a local one
+    // cannot disagree about scope. The environment variable still wins, for a
+    // one-off run without editing a tracked file.
+    const configured = process.env.UNIVERSE_SECTORS !== undefined
+      ? process.env.UNIVERSE_SECTORS.split(',').map((s) => s.trim()).filter(Boolean)
+      : (scanConfig.sectors ?? []);
+
     if (configured.length === 0) return universe;
 
     const restricted = restrictUniverse(universe, configured);
