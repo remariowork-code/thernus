@@ -127,8 +127,36 @@ tests/                   138 tests
 | When a signal fires or repeats | `shared/engine/SignalEngine.ts`, `SignalStateMachine.ts` |
 | Dashboard ordering | `shared/ranking.ts` |
 | Add a data vendor | New file in `worker/src/providers/`, one branch in `index.ts` |
-| Which symbols are scanned | The database, or `UNIVERSE_SECTORS` |
+| Which symbols are scanned | `UNIVERSE_SECTORS`, or `npm run universe` |
 | Who the current user is | `src/lib/server/currentUser.ts` — the only place |
+
+### Changing what is scanned
+
+Two different operations.
+
+**Which sectors are scanned** — `UNIVERSE_SECTORS`, a comma-separated list of
+sector ids. Set it in `.env.worker` for a local worker, or in the `env:` block
+of `.github/workflows/market-worker.yml` for the scheduled one. Restart the
+worker afterwards; the universe is read once at startup.
+
+**What a sector contains** — the universe lives in Postgres, not in code. The
+seed file only populates a fresh install, so edit the database:
+
+```bash
+npm run universe -- list                    # sectors, sizes, which are scanned
+npm run universe -- show semiconductors     # its constituents
+npm run universe -- set my-focus "My Focus" MU,NVDA,DELL,AVGO
+npm run universe -- delete my-focus
+```
+
+`set` replaces a sector's membership wholesale and creates it if absent, so it
+is idempotent. Symbols the database has not seen get a `Stock` row
+automatically. It warns when a sector exceeds the provider's stream cap, since
+that is rejected rather than truncated.
+
+Sector granularity is deliberate. Breadth over a partial sector is misleading —
+"6 of 18 advancing" is a lie when only 6 are subscribed — so to watch an
+arbitrary set of symbols, make them their own sector.
 
 ---
 

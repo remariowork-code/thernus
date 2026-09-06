@@ -20,7 +20,8 @@
     "db:studio": "prisma studio",
     "verify": "npm run typecheck && npm run lint && npm run test",
     "check:alpaca": "tsx scripts/check-alpaca.mjs",
-    "check:redis": "tsx scripts/check-redis.mjs"
+    "check:redis": "tsx scripts/check-redis.mjs",
+    "universe": "tsx scripts/universe.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
@@ -62,7 +63,7 @@
     "typescript": "^5",
     "vitest": "^5.0.0"
   },
-  "description": "MarketPulse \u2014 a sector-first real-time stock scanner.",
+  "description": "MarketPulse — a sector-first real-time stock scanner.",
   "engines": {
     "node": ">=22.0.0"
   }
