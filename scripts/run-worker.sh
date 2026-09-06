@@ -20,7 +20,9 @@ Create it with your credentials (it is gitignored):
   DATABASE_URL=postgresql://...     # from Vercel > Storage > Neon
   ALPACA_API_KEY_ID=...
   ALPACA_API_SECRET_KEY=...
-  UNIVERSE_SECTORS=semiconductors,memory
+
+Only credentials belong here. Which sectors are scanned lives in
+scan.config.json, which is committed so every worker agrees.
 
 MSG
   exit 1
@@ -56,7 +58,15 @@ done < .env.worker
 
 echo "Starting MarketPulse worker"
 echo "  provider : ${MARKET_DATA_PROVIDER:-inferred from credentials}"
-echo "  universe : ${UNIVERSE_SECTORS:-all sectors}"
+# Read the committed scope, so this line cannot claim "all sectors" while
+# scan.config.json is quietly restricting it.
+scope="${UNIVERSE_SECTORS:-$(node -e "
+  try {
+    const c = require('./scan.config.json');
+    process.stdout.write((c.sectors ?? []).join(',') || 'all sectors');
+  } catch { process.stdout.write('all sectors'); }
+" 2>/dev/null)}"
+echo "  universe : ${scope:-all sectors}"
 echo "  redis    : external"
 echo
 

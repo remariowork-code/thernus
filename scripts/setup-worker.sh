@@ -68,7 +68,8 @@ ask() {                       # ask VAR "prompt" [secret]
 }
 
 say "MarketPulse worker setup"
-note "Values are written to $ENV_FILE, which is gitignored."
+note "Credentials are written to $ENV_FILE, which is gitignored."
+note "Which sectors are scanned lives in scan.config.json, not here."
 note "Secret prompts are hidden as you type."
 
 say "1. Alpaca — https://alpaca.markets (Paper Trading account is enough)"
@@ -90,9 +91,6 @@ ALPACA_FEED=iex
 
 REDIS_URL=$REDIS
 DATABASE_URL=$DB
-
-# The free Alpaca plan streams 30 symbols; these two sectors come to 28.
-UNIVERSE_SECTORS=semiconductors,memory
 
 MARKET_DATA_PROVIDER=alpaca
 LOG_LEVEL=info

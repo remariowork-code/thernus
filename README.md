@@ -127,7 +127,8 @@ tests/                   138 tests
 | When a signal fires or repeats | `shared/engine/SignalEngine.ts`, `SignalStateMachine.ts` |
 | Dashboard ordering | `shared/ranking.ts` |
 | Add a data vendor | New file in `worker/src/providers/`, one branch in `index.ts` |
-| Which symbols are scanned | `UNIVERSE_SECTORS`, or `npm run universe` |
+| Which sectors are scanned | `scan.config.json` |
+| What a sector contains | `npm run universe -- set …` (the database) |
 | Who the current user is | `src/lib/server/currentUser.ts` — the only place |
 
 ### Changing what is scanned
@@ -394,8 +395,8 @@ lost in the meantime.
 ### `405 symbol limit exceeded`
 
 The universe is larger than the plan streams — 30 symbols on Alpaca's free tier,
-verified against the live API. Narrow `UNIVERSE_SECTORS` rather than letting a
-sector compute breadth over a truncated constituent set.
+verified against the live API. Narrow the scan in `scan.config.json` rather than
+letting a sector compute breadth over a truncated constituent set.
 
 ### Every RVOL reads near zero
 
