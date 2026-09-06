@@ -79,6 +79,51 @@ export class MarketStore {
     return results.filter((m): m is StockMetrics => m !== null);
   }
 
+  /**
+   * Drop state for symbols and sectors no longer being scanned.
+   *
+   * Keys carry a 24-hour TTL, so narrowing the universe would otherwise leave
+   * yesterday's symbols in Redis for the rest of the day. The dashboard reads
+   * whatever is there and would present those frozen figures as current, which
+   * is worse than showing nothing.
+   *
+   * Safe because exactly one worker owns this Redis. Sharding the universe
+   * across workers would need this to become scoped rather than absolute.
+   */
+  async pruneStaleState(
+    activeSymbols: string[],
+    activeSectorIds: string[],
+  ): Promise<{ symbols: number; sectors: number }> {
+    const keepSymbols = new Set(activeSymbols);
+    const keepSectors = new Set(activeSectorIds);
+
+    const metricKeys = await this.redis.keys('metrics:*');
+    let symbols = 0;
+    for (const key of metricKeys) {
+      const symbol = key.slice('metrics:'.length);
+      if (keepSymbols.has(symbol)) continue;
+      await this.redis.del(key);
+      await this.redis.del(KEYS.quote(symbol));
+      await this.redis.del(KEYS.rvolProfile(symbol));
+      await this.redis.del(KEYS.bars(symbol, '1m'));
+      await this.redis.del(KEYS.bars(symbol, '5m'));
+      symbols++;
+    }
+
+    const sectorKeys = await this.redis.keys('sector:*:metrics');
+    let sectors = 0;
+    for (const key of sectorKeys) {
+      const id = key.slice('sector:'.length, -':metrics'.length);
+      if (keepSectors.has(id)) continue;
+      await this.redis.del(key);
+      await this.redis.del(KEYS.sectorLeaders(id));
+      await this.redis.del(KEYS.sectorHistory(id));
+      sectors++;
+    }
+
+    return { symbols, sectors };
+  }
+
   /** Every symbol currently carrying computed metrics. */
   async listMetricSymbols(): Promise<string[]> {
     const keys = await this.redis.keys('metrics:*');

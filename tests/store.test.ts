@@ -146,3 +146,55 @@ describe('connection safety', () => {
     }
   });
 });
+
+describe('pruning state after the universe changes', () => {
+  beforeEach(() => MemoryRedisClient.reset());
+
+  /**
+   * Regression: narrowing UNIVERSE_SECTORS left the dropped symbols in Redis
+   * for the rest of their 24-hour TTL, and the dashboard rendered those frozen
+   * figures as current — worse than showing nothing.
+   */
+  it('removes symbols and sectors that are no longer scanned', async () => {
+    const redis = new MemoryRedisClient();
+    const store = new MarketStore(redis);
+
+    const write = async (symbol: string) => {
+      await redis.hset(`metrics:${symbol}`, { symbol, price: 100 });
+      await redis.hset(`quote:${symbol}`, { bidPrice: 99 });
+      await redis.hset(`rvol_profile:${symbol}`, { '0': 1000 });
+      await redis.zadd(`bars:${symbol}:1m`, 1, 'x');
+    };
+    await write('MU');
+    await write('NVDA');
+    await redis.hset('sector:semiconductors:metrics', { sectorId: 'semiconductors' });
+    await redis.zadd('sector:semiconductors:leaders', 90, 'MU');
+    await redis.hset('sector:memory:metrics', { sectorId: 'memory' });
+
+    // The new universe keeps MU and memory, drops NVDA and semiconductors.
+    const pruned = await store.pruneStaleState(['MU'], ['memory']);
+
+    expect(pruned).toEqual({ symbols: 1, sectors: 1 });
+    expect(await store.readMetrics('MU')).not.toBeNull();
+    expect(await store.readMetrics('NVDA')).toBeNull();
+    expect(await store.readSector('memory')).not.toBeNull();
+    expect(await store.readSector('semiconductors')).toBeNull();
+
+    // Every satellite key for the dropped symbol goes too, not just metrics.
+    expect(await redis.hgetall('quote:NVDA')).toEqual({});
+    expect(await redis.hgetall('rvol_profile:NVDA')).toEqual({});
+    expect(await redis.zrange('bars:NVDA:1m', 0, -1)).toEqual([]);
+    // ...and the surviving symbol keeps its own.
+    expect(await redis.hgetall('quote:MU')).not.toEqual({});
+  });
+
+  it('is a no-op when nothing has changed', async () => {
+    const redis = new MemoryRedisClient();
+    const store = new MarketStore(redis);
+    await redis.hset('metrics:MU', { symbol: 'MU' });
+    await redis.hset('sector:memory:metrics', { sectorId: 'memory' });
+
+    expect(await store.pruneStaleState(['MU'], ['memory'])).toEqual({ symbols: 0, sectors: 0 });
+    expect(await store.readMetrics('MU')).not.toBeNull();
+  });
+});

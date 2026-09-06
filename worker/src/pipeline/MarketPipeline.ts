@@ -250,6 +250,16 @@ export class MarketPipeline {
       });
     }
 
+    // Clear anything left by a previous run with a different universe, before
+    // the first publish, so the dashboard never shows a stale symbol as live.
+    const pruned = await this.store.pruneStaleState(
+      symbols,
+      this.universe.sectors.map((s) => s.id),
+    );
+    if (pruned.symbols > 0 || pruned.sectors > 0) {
+      Logger.info('Cleared state for symbols no longer scanned', pruned);
+    }
+
     // Publish provenance before the first tick, so the UI can never show live
     // numbers without saying where they came from.
     await this.store.writeProviderInfo({
