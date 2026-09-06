@@ -6,6 +6,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { authConfigured } from '@/lib/auth';
 import { marketStore, systemStatus } from '@/lib/server/market';
 
 export const runtime = 'nodejs';
@@ -40,6 +41,10 @@ export async function GET(): Promise<Response> {
     dataAgeMs: ageMs,
     workerConnected: ageMs !== null && ageMs < 60_000,
     redisError,
+    // Whether the access gate is active. Surfaced because a deployment with
+    // APP_PASSWORD unset is publicly readable, and that should be checkable
+    // rather than assumed.
+    authEnabled: authConfigured(),
     // Which host this process is actually pointed at, so a mismatch between
     // the app and the worker is visible without guessing. Credentials stripped.
     redisHost: redisHostFromEnv(),

@@ -243,11 +243,30 @@ npm run db:migrate   # Apply migrations
 npm run db:seed      # Seed sectors and symbols
 ```
 
+## Access control
+
+Setting `APP_PASSWORD` puts every page and API route behind a session cookie
+issued at `/login`. Leave it unset and the gate does not exist, which is what
+makes local development frictionless — and why `/api/health` reports
+`authEnabled`, so an unintentionally public deployment is detectable rather
+than silent.
+
+The cookie is an expiry plus an HMAC over it, signed with `AUTH_SECRET` (or
+derived from the password when that is absent). There is no session store: a
+single-user gate does not need one, and a stateless cookie keeps the middleware
+free of I/O on every request. Changing either secret invalidates every
+outstanding session.
+
+The API is deliberately inside the gate. The live data is the thing worth
+protecting, not the HTML around it.
+
 ## Known gaps
 
-- **Authentication is not implemented.** Every request resolves to one seeded
-  user via `src/lib/server/currentUser.ts`. That file is the only place that
-  needs to change.
+- **One shared identity.** The gate controls *access*, not *identity*: everyone
+  who signs in resolves to the same user, so watchlists and alert rules are
+  common to all of them. Real per-person accounts mean changing
+  `src/lib/server/currentUser.ts` — deliberately the only place any route
+  obtains a user id — and nothing else.
 - **News ingestion has no provider wired.** The classification engine, ticker
   extraction and correlation logic are built and tested; `ingestHeadline` needs
   a Finnhub or Benzinga feed calling it.
