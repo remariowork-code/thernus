@@ -1,0 +1,71 @@
+# Runs on every push: the ordinary checks, plus a live smoke test of the
+# credentials the scheduled worker depends on.
+#
+# The smoke test exists because a missing or misnamed secret otherwise only
+# surfaces when the scheduled run fails on a weekday morning, hours after the
+# mistake was made.
+
+name: Preflight
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Typecheck, lint, tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  secrets:
+    name: Live credential smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      - name: All four secrets present
+        env:
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+        run: |
+          missing=()
+          for name in REDIS_URL DATABASE_URL ALPACA_API_KEY_ID ALPACA_API_SECRET_KEY; do
+            # Presence only. Values are never echoed.
+            if [[ -z "${!name}" ]]; then missing+=("$name"); else echo "  $name set"; fi
+          done
+          if (( ${#missing[@]} )); then
+            echo "::error::Missing secrets: ${missing[*]} — add them under Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+
+      - name: Alpaca entitlements
+        env:
+          ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+          ALPACA_FEED: iex
+          UNIVERSE_SECTORS: semiconductors,memory
+        run: npm run --silent check:alpaca
+
+      - name: Redis reachable
+        env:
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+        run: npm run --silent check:redis
