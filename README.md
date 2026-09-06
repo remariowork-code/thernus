@@ -1,278 +1,367 @@
 # MarketPulse
 
-A sector-first intraday scanner. It does not rank stocks by how much they have
-already moved; it watches for the *beginning* of coordinated sector movement —
-breadth expanding, volume accelerating, leaders pulling away — and says so in a
-sentence.
+A sector-first intraday stock scanner. It does not rank stocks by how much they
+have already moved; it watches for the *beginning* of coordinated sector
+movement — breadth expanding, volume accelerating, leaders pulling away — and
+states what it found in a sentence.
 
-The distinction it is built around:
+The distinction the whole system is built around:
 
 > Not `MU +4.7%`, but
-> `SEMICONDUCTORS AWAKENING: 8/12 advancing. Sector +2.1%, avg RVOL 2.3x. Leaders: MU +4.7%, SNDK +5.1%. 2 new intraday highs.`
+> `SEMICONDUCTORS AWAKENING: 8/12 advancing. Sector +2.1%, avg RVOL 2.3x.
+> Leaders: MU +4.7%, SNDK +5.1%. 2 new intraday highs.`
 
-## Run it
+---
+
+## Current status
+
+| Component | State |
+|---|---|
+| Next.js app | Deployed on Vercel, behind a password gate |
+| Market worker | Runs locally or on GitHub Actions (weekdays, ~09:20 ET) |
+| Data provider | Alpaca, free tier, real-time IEX websocket |
+| Redis | Redis Cloud (shared live state) |
+| Postgres | Neon (universe, signals, watchlists) — migrated and seeded |
+| Universe | 249 symbols / 17 sectors seeded; **28 / 2 actively scanned** |
+| Tests | 138 across 9 files |
+
+**What is not built:** news ingestion (the classifier exists, no feed is wired),
+signal outcome tracking (schema exists, no job), and per-user identity
+(everyone who signs in shares one account).
+
+---
+
+## Architecture
+
+```
+Alpaca / Polygon / Simulator          market data vendor
+        │  WebSocket: trades
+        ▼
+Market worker                          long-lived Node process — NOT on Vercel
+  ├── StockMetricsEngine   per symbol: 1m/5m/15m, RVOL, VWAP, volatility, score
+  ├── SectorEngine         breadth, weighted score, acceleration, leaders
+  ├── SignalStateMachine   IDLE → AWAKENING → ACCELERATING → BREAKOUT → COOLING
+  └── NewsCatalystEngine   headline → tickers → sector → classify → correlate
+        │  HSET / ZSET / XADD / PUBLISH
+        ▼
+Redis                                  live state + broadcast channel
+        │  SUBSCRIBE market:events
+        ▼
+Next.js on Vercel
+  ├── /api/stream         SSE gateway — relays only, computes nothing
+  └── REST + TanStack Query for first paint
+        │  Server-Sent Events
+        ▼
+Browser
+```
+
+### Why the worker is a separate process
+
+A market feed is a WebSocket held open for the whole session. Vercel runs
+serverless functions that live for seconds per request. You cannot hold a
+six-hour connection inside something that exists for ten. This is the constraint
+the entire design follows from — it is why Redis exists (the two halves never
+talk directly), and why the worker can run anywhere with a network connection,
+including a laptop.
+
+**Exactly one worker may run at a time.** Two would double every signal and race
+the state machine, and Alpaca refuses a second websocket per account outright.
+
+---
+
+## Technology
+
+**Application** — Next.js 16 (App Router, Turbopack), React 19, TypeScript 5,
+Tailwind 4, TanStack Query, Lightweight Charts.
+
+**Worker** — Node 22, `tsx`, `ws`, `ioredis`.
+
+**Data** — Redis for anything that changes tick by tick; Postgres via Prisma 7
+(driver adapter, `@prisma/adapter-pg`) for the universe, signals, watchlists and
+alert rules.
+
+**Testing** — Vitest. No mocked engines: the acceptance test pushes synthetic
+trades through the real pipeline.
+
+---
+
+## Repository layout
+
+```
+shared/                  Imported by BOTH the worker and the web app
+  types.ts                 The contract between them
+  config.ts                Every weight and threshold, overridable by env
+  ranking.ts               Sector ordering (acceleration and breadth, not gain)
+  calculations/            RVOL, VWAP, volume acceleration, volatility, momentum
+  engine/                  StockMetrics, Sector, Signal, dedup, news
+  market/                  Session awareness, seed universe, cached NY clock
+  redis/                   Key schema, client interface, ioredis + in-memory
+  data/                    Universe repository (database, static fallback)
+
+worker/src/              The long-lived process
+  index.ts                 Entry: reconnect, backoff, stall detection
+  embedded.ts              Same pipeline, started inside Next.js for local dev
+  providers/               IMarketDataProvider: Alpaca, Polygon, Simulator
+  pipeline/                Orchestration and Postgres persistence
+
+src/                     Next.js application
+  middleware.ts            Password gate over every page and API route
+  instrumentation.ts       Optionally starts the worker in-process (dev only)
+  app/api/                 SSE gateway and REST
+  components/              Dashboard, sector, stock, alerts, charts
+  lib/                     Auth, formatting, Prisma, server-only helpers
+
+prisma/                  Schema, migration, seed
+scripts/                 Worker runner, setup, diagnostics
+tests/                   138 tests
+.github/workflows/       Scheduled worker + preflight CI
+```
+
+**Where to make changes**
+
+| To change | Edit |
+|---|---|
+| Weights, thresholds, stage rules | `shared/config.ts` |
+| How a metric is computed | `shared/calculations/` |
+| When a sector counts as moving | `shared/engine/SectorEngine.ts` |
+| When a signal fires or repeats | `shared/engine/SignalEngine.ts`, `SignalStateMachine.ts` |
+| Dashboard ordering | `shared/ranking.ts` |
+| Add a data vendor | New file in `worker/src/providers/`, one branch in `index.ts` |
+| Which symbols are scanned | The database, or `UNIVERSE_SECTORS` |
+| Who the current user is | `src/lib/server/currentUser.ts` — the only place |
+
+---
+
+## Running locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-That is the whole setup. With no API key, no Redis and no Postgres it starts on
-simulated data with in-process state, and the UI says so in a banner it will not
-let you dismiss. To watch the full lifecycle drive through a sector:
+With no configuration at all this starts on **simulated data** with in-process
+Redis and the seed universe, and says so in a banner. To watch the full
+lifecycle:
 
 ```bash
 MARKETPULSE_FORCE_SESSION=REGULAR SIM_SCENARIO=semiconductors npm run dev
 ```
 
 Within a couple of minutes the semiconductor sector moves IDLE → AWAKENING →
-ACCELERATING → BREAKOUT, with one signal per transition.
+ACCELERATING → BREAKOUT, one signal per transition.
 
-## Architecture
+### Running against live data
 
-```
-Market data provider
-        │  WebSocket: trades and quotes
-        ▼
-Persistent market worker            ← Railway / Fly.io, never Vercel
-  ├── Stock analytics    1m/5m/15m, RVOL, VWAP, volatility, momentum score
-  ├── Sector analytics   breadth, weighted score, acceleration, leaders
-  ├── Signal state machine  IDLE → AWAKENING → ACCELERATING → BREAKOUT → COOLING
-  └── News / catalyst    headline → tickers → sector → classify → correlate
-        │  HSET / ZSET / XADD / PUBLISH
-        ▼
-Redis                               ← live state + broadcast channel
-        │  SUBSCRIBE market:events
-        ▼
-Next.js on Vercel
-  ├── /api/stream       SSE gateway; computes nothing
-  └── REST + TanStack Query for hydration
-        │  Server-Sent Events
-        ▼
-Browser
+The worker is separate from the app. Configure it once:
+
+```bash
+./scripts/setup-worker.sh      # prompts for credentials, verifies, writes .env.worker
+caffeinate -i ./scripts/run-worker.sh
 ```
 
-The worker is a separate process on purpose. A market-data WebSocket has to stay
-open for six and a half hours; a serverless function cannot hold one. Redis
-carries everything that changes tick by tick, and Postgres only ever sees
-discrete events — signals, news, watchlists, alert history.
+`caffeinate` matters — a sleeping laptop is a stopped worker, and missed minutes
+are not backfilled.
 
-### Layout
+---
 
-```
-shared/          Types, config, math and engines. Imported by both runtimes
-  calculations/    RVOL, VWAP, volume acceleration, volatility, momentum
-  engine/          StockMetrics, Sector, Signal, deduplication, news
-  market/          Session awareness, the seed universe, fast NY clock
-  redis/           Key schema, client interface, ioredis + in-memory impls
-  data/            Universe repository (database-driven, static fallback)
-worker/src/      The persistent worker
-  providers/       IMarketDataProvider: Polygon, plus a simulator
-  pipeline/        Orchestration and persistence
-src/             Next.js application
-  app/api/         SSE gateway and REST
-  components/      Dashboard, sector, stock, alert, chart components
-prisma/          Schema, migration, seed
-tests/           108 tests
-```
+## Configuration
 
-## Going live
+Every variable is optional. Absent ones degrade to a documented fallback.
 
-Set these and the fallbacks switch off automatically:
+### Market data
 
-| Variable | Effect when set |
+| Variable | Meaning |
 |---|---|
-| `ALPACA_API_KEY_ID` + `ALPACA_API_SECRET_KEY` | Live data via Alpaca; free tier includes a real-time websocket |
-| `MARKET_DATA_API_KEY` | Live data via Polygon/Massive; needs a plan with websocket access |
-| `REDIS_URL` | Worker and web share state; embedded worker turns itself off |
-| `DATABASE_URL` | Database-driven universe, persisted signals, watchlists, alerts |
+| `MARKET_DATA_PROVIDER` | `alpaca` \| `polygon` \| `simulated`. Inferred from credentials when unset |
+| `ALPACA_API_KEY_ID` / `ALPACA_API_SECRET_KEY` | Alpaca credentials |
+| `ALPACA_FEED` | `iex` (free) or `sip` (paid, full tape). Default `iex` |
+| `ALPACA_MAX_SYMBOLS` | Stream cap. Defaults to 30 on IEX, unlimited on SIP |
+| `MARKET_DATA_API_KEY` | Polygon/Massive key — needs a plan with websocket access |
 
-### Choosing a provider
+### Infrastructure
 
-Both implement `IMarketDataProvider`, so switching is one environment variable.
+| Variable | Effect when absent |
+|---|---|
+| `REDIS_URL` | In-process Redis; the worker and app cannot see each other |
+| `DATABASE_URL` | Static seed universe; signals not persisted; watchlists 503 |
+| `APP_PASSWORD` | **No access gate — the deployment is publicly readable** |
+| `AUTH_SECRET` | Derived from `APP_PASSWORD` |
 
-**Alpaca** is the cheapest route to live data — the free Basic plan includes a
-real-time websocket. Two constraints, both handled in code and logged rather
-than hidden: the free IEX feed is a single venue carrying roughly 2-3% of
-consolidated volume; and a subscription is capped at 30 symbols, so narrow the
-universe:
+### Scope and tuning
 
-```bash
-UNIVERSE_SECTORS=semiconductors,memory   # 28 symbols, inside the cap
-ALPACA_FEED=iex
-```
+| Variable | Meaning |
+|---|---|
+| `UNIVERSE_SECTORS` | Comma-separated sector ids. Narrows the scan |
+| `MARKETPULSE_CONFIG` | JSON, deep-merged over `shared/config.ts` |
+| `SUBSCRIBE_QUOTES` | Persist the NBBO feed. Off by default — see note below |
 
-IEX matters less than its share suggests. Historical bars are requested from
-the same feed, so RVOL compares IEX volume against an IEX baseline and the
-venue's share cancels out of the ratio — as do volume acceleration, breadth and
-sector ranking. What IEX does affect is *absolute* share counts, which read
-roughly 30x below a consolidated quote screen, and noise in thinly traded names
-where an IEX-sized sample is small. `ALPACA_FEED=sip` on a paid plan lifts
-both constraints.
+### Worker behaviour
 
-The 30-symbol cap is exact, verified against the live API: 30 symbols are
-accepted, 31 returns `405 symbol limit exceeded`. Check any plan's real limits
-with `node scripts/check-alpaca.mjs`, which subscribes to the configured
-universe and reports how many symbols were actually accepted.
+| Variable | Default |
+|---|---|
+| `WORKER_MAX_RETRIES` | 10 |
+| `WORKER_STALL_TIMEOUT_MS` | 30000 — no prints for this long during REGULAR means reconnect |
+| `LOG_LEVEL` | `info` |
+| `EMBEDDED_WORKER` | Run the pipeline inside Next.js. On by default in dev without `REDIS_URL` |
 
-**Polygon/Massive** needs a plan that includes stock websocket access. The free
-tier serves historical aggregates but refuses the live stream, which no amount
-of code works around.
+### Development only
 
-```bash
-# 1. Database
-npm run db:migrate
-npm run db:seed          # 17 sectors, 249 symbols
+`MARKETPULSE_FORCE_SESSION` pins the market session regardless of the clock.
+`SIM_SCENARIO`, `SIM_AWAKEN_SECONDS`, `SIM_BREAKOUT_SECONDS`, `SIM_TICK_RATE_HZ`
+and `SIM_SEED` drive the simulator. None belong in production.
 
-# 2. Web
-vercel deploy
+---
 
-# 3. Worker — see below
-```
-
-Run exactly one worker. Two against the same Redis would double every signal and
-race on the state machine; scale by sharding the symbol universe instead.
-
-### The worker and the app must share one Redis
-
-This is the single most common way to end up with a healthy-looking system and
-an empty dashboard: the worker writes to one Redis and the app reads another.
-Nothing errors, because both connections succeed.
-
-Both report the host they are using — the worker on startup, the app at
-`/api/health` as `redisHost`. If those two strings differ, that is the bug.
-A project with more than one Redis integration attached (`REDIS_URL` and
-`upstash_REDIS_URL`, say) makes this easy to do by accident.
-
-Use a `rediss://` endpoint. Plain `redis://` sends AUTH, and every command
-after it, in cleartext; over a public network that hands the password to
-anyone on the path. Some providers issue non-TLS endpoints by default, so
-check rather than assume — both processes warn at startup if the URL is not
-TLS and the host is not local.
-
-### Where the worker runs
-
-The worker needs a long-lived process. It does not need a *server* — it accepts
-no inbound traffic, it only holds a websocket out to the data provider and
-writes to Redis. Anything that keeps a Node process alive will do.
-
-**Locally.** Free, and architecturally identical to any host: the deployed
-Vercel app reads the same Upstash Redis this writes to, so the dashboard works
-from anywhere while the worker runs on your machine. For a scanner used during
-market hours at your desk, this is a perfectly reasonable permanent answer.
-
-```bash
-./scripts/setup-worker.sh     # prompts for credentials, verifies, then start
-caffeinate -i ./scripts/run-worker.sh
-```
-
-`setup-worker.sh` asks for the four values that cannot be recovered
-automatically — Vercel stores `REDIS_URL` as a Secret and will not export it —
-writes them to a gitignored file with owner-only permissions, and verifies them
-against Alpaca before you start anything.
-
-To keep it running across reboots, install the launchd job in
-`scripts/com.marketpulse.worker.plist`.
-
-A sleeping laptop is a stopped worker. During a session, either keep the lid
-open or hold the machine awake for the process:
-
-```bash
-caffeinate -i ./scripts/run-worker.sh
-```
-
-Missed minutes are not backfilled — the worker only counts volume it saw — so a
-gap understates RVOL for the rest of the session. Restarting re-reads the
-session snapshot and recovers.
-
-**GitHub Actions, free, no card.** Public repositories get unlimited standard
-runner minutes, and `.github/workflows/market-worker.yml` starts the worker
-before the open on weekdays. Honest trade-offs: a job is capped at 6 hours
-against a 6.5-hour session, scheduled runs can start late under load, and each
-run starts fresh so signal cooldowns reset. Good enough to watch a session
-without owning a server; not a guarantee.
-
-**Always-on, free.** Oracle Cloud's Always Free tier includes ARM VMs that do
-not expire. Card required for identity verification, never charged for Always
-Free resources. `Dockerfile.worker` runs there unchanged. This is the only
-option here that is both free and genuinely continuous.
-
-**Always-on, paid.** Railway and Fly.io both want a card and roughly $5/month.
-`railway.json` and `fly.worker.toml` are ready if you go that way.
-
-Avoid free tiers that sleep on inactivity — a scanner that is asleep at 09:30
-is worse than no scanner.
-
-## The parts worth knowing about
+## How the analysis works
 
 **RVOL is time-of-day normalised.** Comparing partial-day volume against a
-full-day average is what makes ordinary scanners useless before 11am. Here,
-volume by 09:45 is compared against the volume this symbol *normally* has by
-09:45, built from a 20-day per-minute curve:
+full-day average is what makes ordinary scanners useless before 11am. Volume by
+09:45 is compared against the volume this symbol *normally* has by 09:45, from a
+20-day per-minute curve:
 
 ```
-E[V(t)] = (1/N) · Σ_days Σ_{m≤t} V(m)      RVOL(t) = V(t) / E[V(t)]
+E[V(t)] = (1/N) · Σ_days Σ_{m≤t} V(m)        RVOL(t) = V(t) / E[V(t)]
 ```
 
-**Breadth is the point.** One semiconductor stock up 6% is noise. Eight of
-eleven up 1.5% on double volume is a sector waking up. Every stage gate requires
-breadth above 50%, and the test suite asserts that a lone runner never wakes its
-sector.
+**Momentum** is nine weighted components summing to 100 — price acceleration,
+5m and 15m movement, RVOL, volume acceleration, VWAP position, distance from
+day high, new high, volatility expansion. The spec's formula as literally
+written pins every stock at 100; weights are applied to the normalised band
+instead, documented at the call site in `shared/calculations/momentum.ts`.
+
+**Breadth is the point.** One semiconductor up 6% is noise; eight of eleven up
+1.5% on double volume is a sector waking up. Every stage gate requires breadth
+above 50%, and a test asserts a lone runner never wakes its sector.
 
 **Signals fire on transitions, not conditions.** A sector holding BREAKOUT for
 twenty minutes emits one signal, not two hundred. Re-emission in the same stage
 needs both a cooldown and a genuine score improvement.
 
-**Thresholds are configuration.** Every weight and gate lives in
-`shared/config.ts` and can be overridden from the environment with
-`MARKETPULSE_CONFIG` — including per-sector overrides, which is how the
-four-name memory group gets lower counts than a 28-name sector.
+**Per-sector overrides** let a four-name memory group use different counts from
+a 28-name semiconductor sector. See `sector.overrides` in `shared/config.ts`.
 
-**The system says when it is not real.** No market-data key means a banner on
-every page. A scanner quietly showing synthetic prices would be worse than one
-that refuses to start.
+---
 
-## Commands
+## Deployment
+
+**Application** — pushes to `main` deploy automatically via the connected
+GitHub repository. Set `APP_PASSWORD` in the Vercel dashboard, then redeploy:
+environment variables are bound at deploy time, so adding one to an existing
+deployment has no effect.
+
+**Worker** — needs a long-lived process, not a server. It accepts no inbound
+traffic.
+
+| Where | Cost | Continuous |
+|---|---|---|
+| Local machine | free | while awake |
+| GitHub Actions (`.github/workflows/market-worker.yml`) | free, no card | ~6h/day |
+| Oracle Cloud Always Free | free (card for ID) | yes |
+| Railway / Fly.io | ~$5/mo | yes |
+
+The Actions workflow fires two cron entries and a timezone guard selects the
+correct one, so it needs no seasonal editing. Its limits are real: a job caps at
+six hours against a six-and-a-half hour session, scheduled runs can start late,
+and each run begins with empty deduplication state.
+
+Avoid free tiers that sleep on inactivity — a scanner asleep at 09:30 is worse
+than no scanner.
+
+---
+
+## Troubleshooting
+
+Two diagnostics answer most questions:
 
 ```bash
-npm run dev          # Web app, with the embedded worker in development
-npm run worker       # The worker on its own (needs REDIS_URL to be useful)
-npm run verify       # typecheck + lint + tests
-npm test             # 108 tests
-npm run db:migrate   # Apply migrations
-npm run db:seed      # Seed sectors and symbols
+npm run check:redis      # host, encryption, what the worker last wrote
+npm run check:alpaca     # entitlements, and the plan's real symbol cap
 ```
 
-## Access control
+### Dashboard is empty but nothing reports an error
 
-Setting `APP_PASSWORD` puts every page and API route behind a session cookie
-issued at `/login`. Leave it unset and the gate does not exist, which is what
-makes local development frictionless — and why `/api/health` reports
-`authEnabled`, so an unintentionally public deployment is detectable rather
-than silent.
+Almost always the worker and the app are on **different Redis instances**. Both
+connections succeed, so nothing errors. Compare the host the worker logs at
+startup with `redisHost` from `/api/health`. A project with more than one Redis
+integration attached makes this easy to do by accident.
 
-The cookie is an expiry plus an HMAC over it, signed with `AUTH_SECRET` (or
-derived from the password when that is absent). There is no session store: a
-single-user gate does not need one, and a stateless cookie keeps the middleware
-free of I/O on every request. Changing either secret invalidates every
-outstanding session.
+### `Alpaca error 406: connection limit exceeded`
 
-The API is deliberately inside the gate. The live data is the thing worth
-protecting, not the HTML around it.
+Two workers are running. Alpaca permits one websocket per account. Check for a
+local worker (`pgrep -f worker/src/index.ts`) while the scheduled job is also
+active. The worker retries with backoff and eventually wins, but the open is
+lost in the meantime.
 
-## Known gaps
+### `405 symbol limit exceeded`
 
-- **One shared identity.** The gate controls *access*, not *identity*: everyone
-  who signs in resolves to the same user, so watchlists and alert rules are
-  common to all of them. Real per-person accounts mean changing
-  `src/lib/server/currentUser.ts` — deliberately the only place any route
-  obtains a user id — and nothing else.
-- **News ingestion has no provider wired.** The classification engine, ticker
-  extraction and correlation logic are built and tested; `ingestHeadline` needs
-  a Finnhub or Benzinga feed calling it.
-- **`SignalOutcome` is modelled but not populated.** The schema supports the
-  follow-through analysis the brief describes as the long-term differentiator;
-  the job that revisits signals at 5/15/30/60 minutes is not written.
-- **Migrations have not been run against a live database.** No Postgres was
-  available here. The schema validates and the migration SQL is generated by
-  Prisma from it, but `prisma migrate dev` has not been executed.
+The universe is larger than the plan streams — 30 symbols on Alpaca's free tier,
+verified against the live API. Narrow `UNIVERSE_SECTORS` rather than letting a
+sector compute breadth over a truncated constituent set.
+
+### Every RVOL reads near zero
+
+The warm-up could not build baselines. The worker logs an error when more than
+half the symbols fail. Usually the provider rejects the historical aggregates
+request, or the plan lacks that entitlement.
+
+### `database: none` despite `DATABASE_URL` being set
+
+Connection strings contain shell metacharacters — a Neon URL ends
+`&sslmode=require`, and `&` is a command separator. Do not `source` a dotenv
+file; `scripts/run-worker.sh` parses it instead. Symptom: the worker silently
+falls back to the seed universe.
+
+### `authEnabled: false` on a deployed site
+
+`APP_PASSWORD` is not reaching the deployment — usually because it was added
+*after* the last deploy. Redeploy.
+
+### Type errors mentioning `routes.d 2.ts`
+
+Duplicate build artifacts, typically from a cloud-synced folder creating
+`file 2.ts` copies. `rm -rf .next`. Keeping the project outside a synced
+directory avoids it.
+
+### Nothing is moving
+
+Check `session` at `/api/health`. Outside `REGULAR` there is nothing to react
+to, and market holidays are in `shared/market/session.ts`. The cron schedule
+does not know about holidays; the scanner does.
+
+---
+
+## Testing
+
+```bash
+npm test          # 138 tests
+npm run verify    # typecheck + lint + tests
+```
+
+`tests/simulation.test.ts` is the acceptance fixture: real trades through the
+real engines, asserting IDLE → AWAKENING → ACCELERATING → BREAKOUT, one signal
+per transition, and that re-injecting an identical tape emits nothing further.
+
+---
+
+## Known limitations
+
+- **One shared identity.** The password gate controls access, not identity.
+  Everyone who signs in resolves to the same user, so watchlists and alert rules
+  are common. Real accounts mean changing `src/lib/server/currentUser.ts` and
+  nothing else.
+- **IEX is one venue**, roughly 2-3% of consolidated volume. RVOL and volume
+  acceleration remain valid — the baseline is built from the same feed, so the
+  venue's share cancels out of the ratio. *Absolute* share counts read far below
+  a consolidated quote screen, and thin names are noisier.
+- **The quote feed is off by default.** Nothing computes from quotes, and a live
+  open across a few hundred symbols produces tens of thousands of messages a
+  second. `SUBSCRIBE_QUOTES=true` enables it, throttled per symbol.
+- **News is not ingested.** Classification, ticker extraction and correlation
+  are built and tested; `MarketPipeline.ingestHeadline` needs a feed calling it.
+  Until then the Catalysts tab stays empty and no signal reaches CRITICAL, which
+  requires a correlated headline.
+- **`SignalOutcome` is modelled but not populated.** The follow-through analysis
+  needs a job revisiting signals at 5/15/30/60 minutes.
+- **A restarted worker does not backfill.** It counts only volume it observed,
+  so a mid-session gap understates RVOL until the next session. Restarting
+  re-reads the provider snapshot and recovers what that exposes.
