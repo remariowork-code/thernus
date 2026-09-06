@@ -132,31 +132,100 @@ tests/                   138 tests
 
 ### Changing what is scanned
 
-Two different operations.
+Two different operations, easily confused.
 
-**Which sectors are scanned** — `UNIVERSE_SECTORS`, a comma-separated list of
-sector ids. Set it in `.env.worker` for a local worker, or in the `env:` block
-of `.github/workflows/market-worker.yml` for the scheduled one. Restart the
-worker afterwards; the universe is read once at startup.
+**Which sectors are scanned** — the `UNIVERSE_SECTORS` environment variable. It
+is a filter, not a definition: the database still holds every sector, and this
+picks which ones the worker subscribes to. Unwatched sectors still appear on the
+dashboard, sitting permanently at `IDLE`.
 
-**What a sector contains** — the universe lives in Postgres, not in code. The
-seed file only populates a fresh install, so edit the database:
+It must agree in three places:
+
+| File | Used by |
+|---|---|
+| `.env.worker` | a locally run worker |
+| `.github/workflows/market-worker.yml` | the scheduled worker |
+| `.github/workflows/preflight.yml` | the CI smoke test |
+
+The worker reads the universe **once, at startup**. Changing the value while it
+runs does nothing — restart it.
+
+**What a sector contains** — a database change, since the universe is
+database-driven. The seed file only populates a fresh install, and it only ever
+adds, so it cannot express "these symbols and no others".
 
 ```bash
 npm run universe -- list                    # sectors, sizes, which are scanned
 npm run universe -- show semiconductors     # its constituents
-npm run universe -- set my-focus "My Focus" MU,NVDA,DELL,AVGO
-npm run universe -- delete my-focus
+npm run universe -- set <id> "<Name>" SYM,SYM,SYM
+npm run universe -- delete <id>
 ```
 
-`set` replaces a sector's membership wholesale and creates it if absent, so it
-is idempotent. Symbols the database has not seen get a `Stock` row
-automatically. It warns when a sector exceeds the provider's stream cap, since
-that is rejected rather than truncated.
+### Worked example: tracking your own six stocks
 
-Sector granularity is deliberate. Breadth over a partial sector is misleading —
-"6 of 18 advancing" is a lie when only 6 are subscribed — so to watch an
-arbitrary set of symbols, make them their own sector.
+Say you want MRNA and five other biotech names, and nothing else.
+
+**1. Create the sector.** `set` replaces membership wholesale and creates the
+sector if it does not exist, so it is safe to re-run.
+
+```bash
+npm run universe -- set my-focus "My Focus" MRNA,LLY,PFE,NVO,REGN,VRTX
+```
+
+Symbols the database has not seen get a `Stock` row automatically. The command
+reports how many symbols the sector now has, and warns if you exceed the
+provider's stream cap — which is rejected outright, not truncated.
+
+**2. Point the worker at it.** In `.env.worker`:
+
+```
+UNIVERSE_SECTORS=my-focus
+```
+
+And the same value in the `env:` block of both workflow files, if you use the
+scheduled worker.
+
+**3. Restart the worker.**
+
+```bash
+pkill -f "worker/src/index.ts"
+caffeinate -i ./scripts/run-worker.sh
+```
+
+Startup should report `Universe loaded {sectors: 1, symbols: 6}` and
+`Alpaca subscription confirmed {trades: 6}`. It also prunes state for the
+symbols you just stopped scanning, so the dashboard does not show them frozen.
+
+**4. Verify.**
+
+```bash
+npm run check:redis     # should show 6 metrics keys
+```
+
+### Thresholds on a small sector
+
+The default stage rules were written for sectors of roughly 10-30 constituents,
+and some are counts rather than proportions. On a six-stock sector, stage 1
+needs three of six moving — reasonable — but stage 4 needs five of six above
++3%, which is close to unreachable.
+
+If a small sector never leaves AWAKENING, override its thresholds rather than
+loosening them globally. `sector.overrides` in `shared/config.ts` is keyed by
+sector id, and the `memory` group is a worked example of exactly this: four
+constituents, so its counts are lowered and its move requirements raised to
+compensate. Copy that block, change the key to your sector id, and adjust.
+
+Overrides can also come from the environment without a redeploy:
+
+```
+MARKETPULSE_CONFIG={"sector":{"overrides":{"my-focus":{"stage1":{"minMovingStocks":2}}}}}
+```
+
+### Why membership is sector-shaped
+
+Breadth is the product. "4 of 18 advancing" is a lie when only 4 of that sector
+are subscribed — the other 14 are not flat, they are invisible. So an arbitrary
+basket of symbols has to become its own sector, where breadth over it is honest.
 
 ---
 
