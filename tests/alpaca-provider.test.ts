@@ -233,3 +233,41 @@ describe('universe restriction', () => {
     expect(restrictUniverse(seedUniverse(), ['nope']).sectors).toHaveLength(0);
   });
 });
+
+describe('reconnect logging', () => {
+  /**
+   * Regression: the worker rebuilds its provider on every reconnect, and the
+   * configuration advisories were emitted each time. A nine-attempt backoff
+   * produced forty lines of identical text with the actual error buried in it.
+   */
+  it('emits configuration advisories once, not once per reconnect', async () => {
+    vi.resetModules();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    process.env.MARKET_DATA_PROVIDER = 'alpaca';
+    process.env.ALPACA_API_KEY_ID = 'k';
+    process.env.ALPACA_API_SECRET_KEY = 's';
+    process.env.ALPACA_FEED = 'iex';
+    process.env.LOG_LEVEL = 'warn';
+
+    const { createProvider } = await import('../worker/src/providers');
+
+    const written: string[] = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      written.push(String(chunk)); return true;
+    });
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+      written.push(String(chunk)); return true;
+    });
+
+    // Ten reconnects, as an exhausted retry budget would produce.
+    for (let i = 0; i < 10; i++) createProvider(['MU']);
+
+    stdout.mockRestore();
+    stderr.mockRestore();
+    warn.mockRestore();
+
+    const iexWarnings = written.filter((l) => l.includes('IEX feed selected')).length;
+    expect(iexWarnings).toBe(1);
+  });
+});

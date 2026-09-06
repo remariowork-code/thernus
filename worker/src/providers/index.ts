@@ -53,13 +53,26 @@ export function resolveProviderName(): ProviderName {
   return 'simulated';
 }
 
+/**
+ * Advisories describe the configuration, not the connection attempt, so they
+ * are logged once per process. The worker rebuilds its provider on every
+ * reconnect, and repeating them turned a nine-attempt backoff into forty lines
+ * of identical text with the real error buried inside it.
+ */
+let advisedOnce = false;
+
 export function createProvider(symbols: string[], scenarios?: Scenario[]): IMarketDataProvider {
   const name = resolveProviderName();
+  const advise = (message: string, context?: Record<string, unknown>) => {
+    if (advisedOnce) return;
+    Logger.warn(message, context);
+  };
 
   if (name === 'polygon') {
     const apiKey = process.env.MARKET_DATA_API_KEY;
     if (!apiKey) throw new Error('MARKET_DATA_PROVIDER=polygon requires MARKET_DATA_API_KEY');
-    Logger.info('Using Polygon market data', { symbols: symbols.length });
+    if (!advisedOnce) Logger.info('Using Polygon market data', { symbols: symbols.length });
+    advisedOnce = true;
     return new PolygonProvider(apiKey);
   }
 
@@ -78,7 +91,7 @@ export function createProvider(symbols: string[], scenarios?: Scenario[]): IMark
       : undefined;
 
     if (feed === 'iex') {
-      Logger.warn(
+      advise(
         'Alpaca IEX feed selected. RVOL and volume acceleration remain valid: the baseline is ' +
         'built from IEX history and compared against IEX live volume, so the venue\'s share ' +
         'cancels out of the ratio. Absolute share counts do not — they are IEX-only, roughly ' +
@@ -87,14 +100,16 @@ export function createProvider(symbols: string[], scenarios?: Scenario[]): IMark
       );
     }
 
-    Logger.info('Using Alpaca market data', { symbols: symbols.length, feed });
+    if (!advisedOnce) Logger.info('Using Alpaca market data', { symbols: symbols.length, feed });
+    advisedOnce = true;
     return new AlpacaProvider({ keyId, secretKey, feed, symbols, maxStreamSymbols });
   }
 
-  Logger.warn(
+  advise(
     'No market data key set — running on SIMULATED data. Prices are synthetic and must not be traded on.',
     { symbols: symbols.length },
   );
+  advisedOnce = true;
   return new SimulatedProvider({
     symbols,
     scenarios,
