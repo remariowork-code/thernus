@@ -101,6 +101,7 @@ export function Dashboard({ initialSectors }: { initialSectors: SectorMetrics[] 
         // Until /api/health answers, assume a worker is present rather than
         // flashing an alarming banner on every page load.
         workerConnected={health?.workerConnected ?? true}
+        session={feed.session}
       />
 
       <main className="mx-auto max-w-[1600px] space-y-4 px-5 py-5">

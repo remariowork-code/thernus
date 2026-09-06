@@ -109,21 +109,34 @@ export function StatusBar({
  *
  * Deliberately hard to miss and not dismissible — the one thing a trading tool
  * must never be coy about. It distinguishes three states, because "no worker"
- * and "simulated feed" are different problems with different fixes.
+ * and "simulated feed" are different problems with different fixes, and it
+ * reads the market session too: no worker at 10am on a Tuesday is a fault,
+ * whereas no worker on a Sunday is simply the weekend.
  */
 export function SimulationBanner({
-  simulated, provider, workerConnected,
+  simulated, provider, workerConnected, session,
 }: {
   simulated: boolean;
   provider: string | null;
   workerConnected: boolean;
+  session: MarketSession | null;
 }) {
   if (!workerConnected) {
+    const marketOpen = session === 'REGULAR' || session === 'PREMARKET';
     return (
-      <div className="border-b border-down/30 bg-down/10 px-5 py-2 text-center text-xs text-down">
-        <strong className="font-semibold">No market worker is running.</strong>{' '}
-        Nothing is writing to Redis, so every figure on this page is empty rather than stale.
-        Deploy <code className="font-mono">worker/src/index.ts</code> to Railway or Fly.
+      <div className={cn(
+        'border-b px-5 py-2 text-center text-xs',
+        marketOpen
+          ? 'border-down/30 bg-down/10 text-down'
+          : 'border-border bg-surface text-muted',
+      )}>
+        <strong className="font-semibold">
+          {marketOpen ? 'No market worker is running.' : 'No market worker is running.'}
+        </strong>{' '}
+        {marketOpen
+          ? 'The market is open and nothing is collecting data. Start a worker now — these figures are frozen.'
+          : 'Nothing is collecting data, which is expected outside market hours. Figures below are from the last session.'}{' '}
+        Run <code className="font-mono">./scripts/run-worker.sh</code> locally, or let the scheduled job start it.
       </div>
     );
   }
