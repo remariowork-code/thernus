@@ -342,6 +342,138 @@ a 28-name semiconductor sector. See `sector.overrides` in `shared/config.ts`.
 
 ---
 
+## Reading the dashboard
+
+Everything on screen answers one question: **is a sector starting to move, and
+is the move broad enough to believe?** Individual stock prices are supporting
+evidence, not the point.
+
+### The four figures at the top
+
+| Label | Means |
+|---|---|
+| **What is moving** | The highest-ranked sector that is not idle, with its stage and score |
+| **How broad** | Advancing constituents over active ones, for that sector |
+| **Sector move** | Its mean constituent change, plus new-high count |
+| **Why** | Whether a news catalyst correlates with the move |
+
+`Why` reads *No catalyst* until a news feed is wired up. That is the current
+state of the system, not a quiet news day.
+
+### Sector table
+
+Ranked by score, acceleration and breadth — **not** by percentage gain. A sector
+at 60 and climbing on wide participation outranks one at 75 that has stalled.
+That ordering is the product's whole argument, and it lives in
+`shared/ranking.ts`.
+
+| Column | Read it as |
+|---|---|
+| **Score** | 0-100 weighted momentum of the constituents |
+| **Change** | Mean constituent change today |
+| **Breadth** | Advancing / active, as a bar and `8/11` |
+| **Avg RVOL** | Volume against what is normal *for this time of day* |
+| **Accel** | Score now minus score five minutes ago |
+| **Highs** | Constituents printing new intraday highs |
+| **Leaders** | Top three by momentum, `▲` meaning new high |
+
+**Accel is the early-warning column.** A sector at score 55 with `+18` is more
+interesting than one at 80 with `-4`: the first is arriving, the second is
+leaving.
+
+### Stage badges
+
+| Badge | Means | Roughly requires |
+|---|---|---|
+| **Idle** | Nothing to see | — |
+| **Awakening** | Early warning | 3 constituents up 1%+, breadth >50%, RVOL 1.5 |
+| **Confirmed** | The move is real | sector +1.5%, RVOL 2.0, 1 new high |
+| **Breakout** | Broad and strong | sector +2%, RVOL 2.5, 3 leaders +3%, 2 new highs |
+| **Cooling** | Fading | Acceleration negative for 5 minutes |
+
+Exact numbers are in `shared/config.ts`; a sector may carry per-sector
+overrides.
+
+### Signal feed
+
+Each row is one sentence the engine wrote when a sector *changed stage* — not a
+running commentary. A sector holding Breakout for twenty minutes produces one
+signal, not two hundred.
+
+```
+10:14:02  L3  AI INFRASTRUCTURE BREAKOUT: 14/18 advancing. Sector +2.4%,
+              avg RVOL 2.8x. Leaders: DELL +4.1%, SMCI +3.9%, VRT +3.2%.
+              3 new intraday highs.
+```
+
+`L1`-`L5` is the alert level: L1 early warning, L2 confirmed, L3 breakout,
+L4 catalyst, L5 major move. **L5 is currently unreachable** — it requires a
+correlated news headline, and no news feed is connected.
+
+Stock-level rows (`MU new intraday high`, `QCOM unusual volume`) only appear for
+symbols in a sector that is already awake. That is deliberate: 249 symbols
+emitting independently would be noise.
+
+### Stock table
+
+| Column | Read it as |
+|---|---|
+| **Score** | 0-100 momentum |
+| **Change / 5m** | Today, and the last five minutes |
+| **RVOL** | Volume vs typical for this time of day. 1.0 is normal |
+| **Vol accel** | Last 5 minutes against the prior 15. Needs ~20 minutes of session to mean anything |
+| **VWAP** | Distance from session VWAP; positive is above |
+| **State** | Awakening ≥45, Confirmed ≥60, Breakout ≥75 *and* a new high |
+| **Volume** | Shares — **IEX only**, so roughly 2-3% of consolidated. Looks small on purpose |
+
+### Tabs
+
+| Tab | Shows |
+|---|---|
+| Sector Awakening | Sectors at Awakening or Confirmed |
+| Intraday Momentum | Stocks scoring 50+ |
+| Breakouts | New intraday high **and** RVOL ≥1.5 |
+| Unusual Volume | RVOL ≥2 |
+| Catalysts | Headlines — empty until a news feed is wired |
+| My Watchlists | Your saved symbols |
+
+### A worked morning
+
+**09:31** — Everything idle, RVOL near 1.0 and jumping around. Normal: the
+expected-volume denominator is tiny this early, so the ratio is unstable for the
+first fifteen minutes.
+
+**09:52** — `AI Infrastructure  61  +1.1%  61% (11/18)  1.7x  +14  Awakening`
+
+Eleven of eighteen advancing on 1.7x volume. Not dramatic, but it is *broad*,
+and `+14` says it built over five minutes. This is the case the product exists
+to catch — a top-gainers list would show nothing here.
+
+**10:07** — Score 74, breadth 14/18, RVOL 2.3x, three new highs, badge
+**Confirmed**. A signal fired at the transition. Opening the sector shows DELL,
+SMCI and VRT leading.
+
+**10:40** — Score 71, Accel `-6`, breadth 12/18. Losing steam. If acceleration
+stays negative for five minutes the badge turns **Cooling** and one signal says
+so.
+
+### What good and bad look like
+
+Healthy: RVOL clustering near 1.0 with genuine outliers; breadth moving through
+the day; acceleration changing sign.
+
+Suspicious:
+
+| Symptom | Likely cause |
+|---|---|
+| Every RVOL identical | Warm-up failed to build baselines |
+| All sectors 0 / Idle, no data age | No worker is running |
+| Breadth `0/0` | Nothing in that sector has traded — often not subscribed |
+| Numbers frozen | Check `dataAgeMs` at `/api/health` |
+| 15 sectors permanently idle | Expected: they are in the database but not scanned |
+
+---
+
 ## Deployment
 
 **Application** — pushes to `main` deploy automatically via the connected
