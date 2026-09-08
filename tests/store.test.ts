@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { MemoryRedisClient } from '@shared/redis/client';
+import { isUnencryptedRemote } from '@shared/redis';
 import { MarketStore } from '@shared/redis/store';
 
 describe('sector score history', () => {
@@ -112,38 +113,34 @@ describe('data provenance', () => {
 });
 
 describe('connection safety', () => {
-  const saved = process.env.REDIS_URL;
-  afterEach(() => {
-    if (saved === undefined) delete process.env.REDIS_URL;
-    else process.env.REDIS_URL = saved;
-    vi.restoreAllMocks();
+  /**
+   * Regression: this used to construct a real client to observe a console
+   * warning, which opened a socket to a non-existent host. That is slow, and
+   * it made the result depend on how the runner resolves DNS — it passed on a
+   * laptop and failed on a CI runner.
+   */
+  it('flags a plain redis:// endpoint on a remote host', () => {
+    expect(isUnencryptedRemote('redis://default:secret@example.db.redis.io:17732')).toBe(true);
+    expect(isUnencryptedRemote('redis://example.com:6379')).toBe(true);
   });
 
-  it('warns when Redis is reached over an unencrypted public endpoint', async () => {
-    vi.resetModules();
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    process.env.REDIS_URL = 'redis://default:secret@example.db.redis.io:17732';
-
-    const { createRedisClient } = await import('@shared/redis');
-    const client = createRedisClient();
-    await client.quit().catch(() => {});
-
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('unencrypted'));
-    // The warning must not leak the credential it is warning about.
-    expect(warn.mock.calls.flat().join(' ')).not.toContain('secret');
+  it('accepts TLS endpoints', () => {
+    expect(isUnencryptedRemote('rediss://default:x@host.upstash.io:6379')).toBe(false);
   });
 
-  it('stays quiet for a TLS endpoint and for localhost', async () => {
-    for (const url of ['rediss://default:x@host.upstash.io:6379', 'redis://127.0.0.1:6379']) {
-      vi.resetModules();
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      process.env.REDIS_URL = url;
-      const { createRedisClient } = await import('@shared/redis');
-      const client = createRedisClient();
-      await client.quit().catch(() => {});
-      expect(warn).not.toHaveBeenCalled();
-      vi.restoreAllMocks();
+  it('accepts local endpoints, with or without credentials', () => {
+    for (const url of [
+      'redis://127.0.0.1:6379',
+      'redis://localhost:6379',
+      'redis://default:x@localhost:6379',
+      'redis://[::1]:6379',
+    ]) {
+      expect(isUnencryptedRemote(url)).toBe(false);
     }
+  });
+
+  it('does not flag a malformed URL, which fails at connect time instead', () => {
+    expect(isUnencryptedRemote('not-a-url')).toBe(false);
   });
 });
 

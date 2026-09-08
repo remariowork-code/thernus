@@ -22,7 +22,26 @@ export function createRedisClient(): RedisClient {
   return new IoRedisClient(url);
 }
 
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0']);
+
 let warnedAboutTls = false;
+
+/**
+ * Whether a connection string would send credentials in the clear.
+ *
+ * Pure and exported so it can be tested without opening a socket — the check
+ * is about the URL, and a unit test that constructs a real client to observe a
+ * console warning is both slower and dependent on how the runner resolves DNS.
+ */
+export function isUnencryptedRemote(url: string): boolean {
+  if (url.startsWith('rediss://')) return false;
+  try {
+    return !LOCAL_HOSTS.has(new URL(url).hostname);
+  } catch {
+    // A malformed URL fails loudly at connect time instead.
+    return false;
+  }
+}
 
 /**
  * A `redis://` endpoint sends AUTH — and everything after it — in cleartext.
@@ -30,22 +49,8 @@ let warnedAboutTls = false;
  * providers hand out non-TLS endpoints by default, so this is easy to adopt
  * without noticing.
  */
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0']);
-
 function warnIfUnencrypted(url: string): void {
-  if (warnedAboutTls || url.startsWith('rediss://')) return;
-
-  let hostname: string;
-  try {
-    // Parsed rather than pattern-matched: a credential-less URL has no '@' to
-    // anchor on, and a password can contain almost anything.
-    hostname = new URL(url).hostname;
-  } catch {
-    return; // A malformed URL fails loudly at connect time instead.
-  }
-
-  if (LOCAL_HOSTS.has(hostname)) return;
-
+  if (warnedAboutTls || !isUnencryptedRemote(url)) return;
   warnedAboutTls = true;
   console.warn(
     '[marketpulse] REDIS_URL uses redis:// over a non-local host. The connection, ' +

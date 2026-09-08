@@ -491,10 +491,17 @@ traffic.
 | Oracle Cloud Always Free | free (card for ID) | yes |
 | Railway / Fly.io | ~$5/mo | yes |
 
-The Actions workflow fires two cron entries and a timezone guard selects the
-correct one, so it needs no seasonal editing. Its limits are real: a job caps at
-six hours against a six-and-a-half hour session, scheduled runs can start late,
-and each run begins with empty deduplication state.
+The Actions workflow fires two cron entries and a guard skips anything outside
+the trading day, so it needs no seasonal editing.
+
+Its limits are real, and one is worse than it sounds. A job caps at six hours
+against a six-and-a-half hour session, and each run begins with empty
+deduplication state. But scheduled runs are also genuinely unreliable: measured
+on this repository, runs scheduled for 13:20 and 14:20 UTC actually started at
+18:15 and 18:45 — about five hours late. The guard therefore accepts any time
+the market is still open and caps the run at the close, so a late start covers
+part of the session rather than nothing. Treat the open as best-effort; if you
+need it reliably, run the worker somewhere persistent.
 
 Avoid free tiers that sleep on inactivity — a scanner asleep at 09:30 is worse
 than no scanner.

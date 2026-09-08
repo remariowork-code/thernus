@@ -10,8 +10,11 @@
 # Caveats, honestly:
 #   - A job is capped at 6 hours. A regular session is 6.5, so the last ~30
 #     minutes are not covered by a single run.
-#   - Scheduled workflows are best-effort and can start late under load, so
-#     the open is not guaranteed.
+#   - Scheduled workflows are best-effort. Measured on this repository: runs
+#     scheduled for 13:20 and 14:20 UTC actually started at 18:15 and 18:45,
+#     roughly five hours late. The gate below therefore accepts any time the
+#     market is still open rather than only the pre-open window, so a delayed
+#     run covers whatever remains of the session instead of doing nothing.
 #   - The worker holds no state between runs. Restarting re-reads the session
 #     snapshot, so RVOL recovers, but signal cooldowns reset.
 #
@@ -59,16 +62,23 @@ jobs:
 
           minutes_of_day=$((10#$ny_hour * 60 + 10#$ny_min))
 
+          # 09:00 to 15:45 New York. Deliberately wide: a scheduled run can
+          # arrive hours after its cron time, and a narrow pre-open window
+          # turned every late run into a no-op. Late coverage of part of a
+          # session beats none.
+          #
+          # Both cron entries can match on the same day, which is what the
+          # concurrency group above is for — the second is queued, not run
+          # alongside, and two workers would double every signal.
+          OPEN=540      # 09:00
+          CLOSE=945     # 15:45, leaving no time for a run that cannot do useful work
+
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "Manual run." && echo "proceed=true" >> "$GITHUB_OUTPUT"
-          # 09:00-10:15 New York. Wide enough to tolerate a late scheduled
-          # start — GitHub queues these behind paid work and they can slip by
-          # a quarter hour or more — but narrow enough that only one of the
-          # two cron entries can match on any given date.
-          elif (( minutes_of_day >= 540 && minutes_of_day <= 615 )); then
-            echo "Pre-open window." && echo "proceed=true" >> "$GITHUB_OUTPUT"
+          elif (( minutes_of_day >= OPEN && minutes_of_day <= CLOSE )); then
+            echo "Within the trading day." && echo "proceed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Outside the window; the other cron entry covers this half of the year."
+            echo "Outside the trading day; nothing useful to collect."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -96,8 +106,15 @@ jobs:
           MARKET_DATA_PROVIDER: alpaca
           LOG_LEVEL: info
         run: |
-          MINUTES="${{ github.event.inputs.minutes || '350' }}"
-          echo "Running the worker for ${MINUTES} minutes"
+          # Never run past the close: a late start should finish at 16:05 New
+          # York rather than idling on a dead tape for its full six hours.
+          now=$(( $(TZ=America/New_York date +%H) * 60 + 10#$(TZ=America/New_York date +%M) ))
+          until_close=$(( 965 - now ))          # 16:05 New York
+          requested="${{ github.event.inputs.minutes || '350' }}"
+          MINUTES=$(( until_close < requested ? until_close : requested ))
+          (( MINUTES < 1 )) && MINUTES=1
+
+          echo "Running the worker for ${MINUTES} minutes (until the close, capped at ${requested})"
           # SIGTERM on timeout so the worker's shutdown handler runs.
           timeout --signal=TERM "${MINUTES}m" npx tsx worker/src/index.ts || code=$?
           # 124 is timeout's "ran to completion", which is the expected ending.
