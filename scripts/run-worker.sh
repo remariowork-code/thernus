@@ -56,6 +56,18 @@ done < .env.worker
 
 : "${REDIS_URL:?REDIS_URL is required — without it the worker writes to memory that Vercel cannot read}"
 
+# --until-close stops the worker at 16:05 New York. Leaving it running
+# overnight is not harmless: it holds the provider's single connection, and the
+# next scheduled run is then refused rather than queued.
+STOP_AT_CLOSE=false
+[[ "${1:-}" == "--until-close" ]] && STOP_AT_CLOSE=true
+
+if [[ "$STOP_AT_CLOSE" == true ]]; then
+  nohup "$(dirname "$0")/stop-at-close.sh" > /dev/null 2>&1 &
+  disown 2>/dev/null || true
+  echo "Will stop automatically at 16:05 New York."
+fi
+
 echo "Starting MarketPulse worker"
 echo "  provider : ${MARKET_DATA_PROVIDER:-inferred from credentials}"
 # Read the committed scope, so this line cannot claim "all sectors" while
