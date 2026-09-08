@@ -198,3 +198,46 @@ describe('pruning state after the universe changes', () => {
     expect(await store.readMetrics('MU')).not.toBeNull();
   });
 });
+
+describe('signal feed is scoped to the trading day', () => {
+  beforeEach(() => MemoryRedisClient.reset());
+
+  /**
+   * Regression: the stream is capped by length, not age, so signals from a
+   * previous session survived into the next and the live feed presented them
+   * as current — a Friday close appearing at Tuesday's open.
+   */
+  it('excludes signals from earlier trading days', async () => {
+    const redis = new MemoryRedisClient();
+    const store = new MarketStore(redis);
+
+    const at = (iso: string, id: string) => ({
+      id, symbol: null, sectorId: 'memory', sectorName: 'Memory', type: 'SECTOR_AWAKENING',
+      severity: 'INFO', score: 50, triggerValue: 1, previousValue: null,
+      headline: `signal ${id}`, metadata: {}, createdAt: iso,
+    });
+
+    // 14:00 UTC is 10:00 New York on both dates, so neither is a boundary case.
+    await store.appendSignal(at('2026-09-04T14:00:00Z', 'friday') as never);
+    await store.appendSignal(at('2026-09-08T14:00:00Z', 'tuesday') as never);
+
+    const now = Date.parse('2026-09-08T15:00:00Z');
+    const signals = await store.readSignals(50, false, now);
+
+    expect(signals.map((s) => s.id)).toEqual(['tuesday']);
+  });
+
+  it('keeps every signal from the current day, newest first', async () => {
+    const redis = new MemoryRedisClient();
+    const store = new MarketStore(redis);
+    for (const hour of ['14', '15', '16']) {
+      await store.appendSignal({
+        id: hour, symbol: null, sectorId: 'm', sectorName: 'M', type: 'SECTOR_AWAKENING',
+        severity: 'INFO', score: 1, triggerValue: 1, previousValue: null,
+        headline: hour, metadata: {}, createdAt: `2026-09-08T${hour}:00:00Z`,
+      } as never);
+    }
+    const signals = await store.readSignals(50, false, Date.parse('2026-09-08T17:00:00Z'));
+    expect(signals.map((s) => s.id)).toEqual(['16', '15', '14']);
+  });
+});

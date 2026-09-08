@@ -24,6 +24,7 @@
 import type {
   MarketEvent, NewsHeadline, SectorMetrics, Signal, StockMetrics, MarketSession,
 } from '../types';
+import { nyWallClock } from '../market/nyClock';
 import type { RedisClient } from './client';
 
 export const KEYS = {
@@ -284,12 +285,37 @@ export class MarketStore {
     }
   }
 
-  async readSignals(count = 50, criticalOnly = false): Promise<Signal[]> {
+  /**
+   * Recent signals, scoped to the current trading day.
+   *
+   * The stream is capped by length, not by age, so yesterday's signals survive
+   * into today and the live feed would present them as current — which is
+   * exactly how a Friday close ends up on screen at Tuesday's open. History
+   * belongs in Postgres; this feed is about now.
+   */
+  async readSignals(count = 50, criticalOnly = false, now = Date.now()): Promise<Signal[]> {
     const raw = await this.redis.xrevrange(
       criticalOnly ? KEYS.signalsCritical : KEYS.signalsLatest,
-      count,
+      // Over-fetch, because filtering by day may discard most of the window.
+      count * 4,
     );
-    return raw.map((r) => JSON.parse(r) as Signal);
+
+    const today = nyWallClock(now).dateKey;
+    const signals: Signal[] = [];
+    for (const entry of raw) {
+      let signal: Signal;
+      try {
+        signal = JSON.parse(entry) as Signal;
+      } catch {
+        continue; // A malformed entry must not break the feed.
+      }
+      const at = Date.parse(signal.createdAt);
+      if (!Number.isFinite(at)) continue;
+      if (nyWallClock(at).dateKey !== today) continue;
+      signals.push(signal);
+      if (signals.length >= count) break;
+    }
+    return signals;
   }
 
   async appendNews(item: NewsHeadline): Promise<void> {
