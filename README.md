@@ -581,6 +581,14 @@ per transition, and that re-injecting an identical tape emits nothing further.
   Everyone who signs in resolves to the same user, so watchlists and alert rules
   are common. Real accounts mean changing `src/lib/server/currentUser.ts` and
   nothing else.
+- **Premarket and after-hours are effectively dark on the free IEX feed.**
+  Measured on a Tuesday at 07:30 ET: none of the 22 watched symbols had traded
+  in the previous two hours, and every `latestTrade` was still the prior
+  session's close. The engines are session-aware and apply the extended-hours
+  threshold multiplier, but there is nothing for them to read. The scheduled
+  worker starts at 09:20 for this reason — earlier would only burn the
+  six-hour job cap on a dead tape. A consolidated feed (`ALPACA_FEED=sip`)
+  would change this.
 - **IEX is one venue**, roughly 2-3% of consolidated volume. RVOL and volume
   acceleration remain valid — the baseline is built from the same feed, so the
   venue's share cancels out of the ratio. *Absolute* share counts read far below
