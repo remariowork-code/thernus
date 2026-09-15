@@ -14,7 +14,28 @@ import { MarketPipeline } from '../worker/src/pipeline/MarketPipeline';
 import { StockMetricsEngine } from '@shared/engine/StockMetricsEngine';
 import type { MarketEvent, Universe } from '@shared/types';
 
-const OPEN = Date.parse('2026-09-08T13:30:00Z');
+/**
+ * Today's 09:30 New York, not a fixed date.
+ *
+ * A hardcoded date made this suite pass only during the week it was written:
+ * the signal feed is scoped to the current trading day, so a fixture stamped
+ * last Tuesday has its own signals filtered out as stale.
+ */
+const OPEN = (() => {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(new Date()).map((p) => [p.type, p.value]),
+  ) as Record<string, string>;
+  // 09:30 New York expressed as an instant, whichever side of DST we are on.
+  const noonUtc = Date.parse(`${parts.year}-${parts.month}-${parts.day}T12:00:00Z`);
+  const offsetMin = Math.round(
+    (Date.parse(new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'medium',
+    }).format(noonUtc).replace(' ', 'T') + 'Z') - noonUtc) / 60000,
+  );
+  return Date.parse(`${parts.year}-${parts.month}-${parts.day}T09:30:00Z`) - offsetMin * 60000;
+})();
 const MINUTE = 60_000;
 
 const UNIVERSE: Universe = {
@@ -48,15 +69,16 @@ function build() {
   MemoryRedisClient.reset();
   const redis = new MemoryRedisClient();
   const store = new MarketStore(redis);
+
+  let clock = OPEN;
   const provider = new SimulatedProvider({
     symbols: UNIVERSE.stocks.map((s) => s.symbol),
     scenarios: SCENARIOS,
     manualClock: true,
     tickRateHz: 1,
     seed: 42,
+    clock: () => clock,
   });
-
-  let clock = OPEN;
   const pipeline = new MarketPipeline({
     provider, store, universe: UNIVERSE, config: DEFAULT_CONFIG,
     now: () => clock,
@@ -228,16 +250,22 @@ describe('market pipeline', () => {
   });
 
   it('reports health so the worker can detect a stalled tape', async () => {
+    // Warm up mid-session, not at the bell. Adopting "the session so far" is
+    // only meaningful once some of it has happened, and starting the clock at
+    // 09:30 made this assertion depend on what time of day the suite ran.
+    ctx.advance(120 * MINUTE);
+
     await ctx.pipeline.warmUp(2);
     await ctx.provider.connect();
     await ctx.pipeline.start();
 
-    // Warm-up adopts the session already in progress, so symbols count as
+    // Warm-up adopts the volume already traded today, so symbols count as
     // tracked before this process has seen a single print of its own.
     expect(ctx.pipeline.stats().tracked).toBe(UNIVERSE.stocks.length);
-    ctx.provider.step(OPEN);
+    ctx.provider.step(ctx.at());
     expect(ctx.pipeline.stats().tracked).toBe(UNIVERSE.stocks.length);
 
+    // No prints for 45 seconds is what the worker's stall detector watches for.
     ctx.advance(45_000);
     expect(ctx.pipeline.msSinceLastTick()).toBeGreaterThan(30_000);
 

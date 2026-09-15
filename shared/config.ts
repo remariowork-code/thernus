@@ -249,6 +249,20 @@ export const DEFAULT_CONFIG: MarketPulseConfig = {
     overrides: {
       // The dedicated memory scanner from the spec. Only four constituents, so
       // the "how many are moving" counts drop and breadth must be near-total.
+      // A hand-picked watchlist is not a sector: four unrelated names share no
+      // story, so breadth over them means nothing and the volume gates cannot
+      // be trusted on thinly covered symbols. These thresholds exist only to
+      // keep the sector "awake", because stock-level signals are gated on that
+      // — the point here is per-stock alerting, not sector detection.
+      watchlist: {
+        stage1: { minMovingStocks: 1, movingStockMovePct: 1.0, minLeaderAvgMovePct: 1.0,
+                  minBreadth: 0, minAvgRvol: 0, minNewHighs: 0 },
+        stage2: { minMovingStocks: 1, minSectorAvgMovePct: 2.0, minAvgRvol: 0, minNewHighs: 0 },
+        stage3: { minMovingStocks: 2, minSectorAvgMovePct: 4.0, minStrongLeaders: 1,
+                  minAvgRvol: 0, minNewHighs: 0 },
+        stage4: { minMovingStocks: 3, minSectorAvgMovePct: 8.0, minStrongLeaders: 2,
+                  minAvgRvol: 0, minNewHighs: 1 },
+      },
       memory: {
         stage1: { minMovingStocks: 2, movingStockMovePct: 1.5, minLeaderAvgMovePct: 1.5, minAvgRvol: 1.5 },
         stage2: { minMovingStocks: 3, movingStockMovePct: 2.0, minSectorAvgMovePct: 2.0, minAvgRvol: 1.5, minNewHighs: 1 },

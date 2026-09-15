@@ -47,6 +47,15 @@ export interface SimulatedProviderOptions {
   referencePrices?: Record<string, number>;
   /** Drive the clock manually instead of with a timer — used by tests. */
   manualClock?: boolean;
+  /**
+   * Source of "now" for the REST equivalents.
+   *
+   * `step()` already takes its time from the caller, but `getSnapshot` derives
+   * the session volume traded so far from the clock. Reading real wall time
+   * there makes a manually clocked run behave differently before and after the
+   * real market opens, which is a property no test should have.
+   */
+  clock?: () => number;
 }
 
 /** Mulberry32 — small, fast, and deterministic from a seed. */
@@ -85,7 +94,10 @@ export class SimulatedProvider implements IMarketDataProvider {
   private lastStepAt = 0;
   private subscribed = new Set<string>();
 
+  private readonly clock: () => number;
+
   constructor(private readonly options: SimulatedProviderOptions) {
+    this.clock = options.clock ?? (() => Date.now());
     this.random = mulberry32(options.seed ?? 1337);
     this.tickRateHz = options.tickRateHz ?? 2;
     this.manualClock = options.manualClock ?? false;
@@ -272,7 +284,7 @@ export class SimulatedProvider implements IMarketDataProvider {
     // Volume "already traded today", consistent with the elapsed session, so a
     // mid-session start behaves the way it would against a real vendor.
     const elapsedMinutes = Math.max(
-      Math.min(nyWallClock(Date.now()).minutesOfDay - REGULAR_OPEN_MINUTE, SESSION_MINUTES),
+      Math.min(nyWallClock(this.clock()).minutesOfDay - REGULAR_OPEN_MINUTE, SESSION_MINUTES),
       0,
     );
 
@@ -287,7 +299,7 @@ export class SimulatedProvider implements IMarketDataProvider {
       dayHigh: price,
       dayLow: price,
       dayOpen: previousClose,
-      timestamp: Date.now(),
+      timestamp: this.clock(),
     };
   }
 
