@@ -52,8 +52,28 @@ function arg(name: string, fallback: string): string {
   return index >= 0 && process.argv[index + 1] ? process.argv[index + 1] : fallback;
 }
 
-async function get<T>(url: string): Promise<T> {
+/**
+ * A GET that survives Alpaca's rate limiter.
+ *
+ * A full-market backtest makes thousands of calls against a 200/minute budget,
+ * so a 429 is an expected part of the run rather than a failure. Backing off
+ * and retrying turns a sweep that dies halfway into one that merely takes
+ * longer — which matters, because a sweep that dies halfway silently produces
+ * a missing row that looks like a result of zero.
+ */
+async function get<T>(url: string, attempt = 0): Promise<T> {
   const res = await fetch(url, { headers: HEADERS });
+
+  if (res.status === 429 && attempt < 6) {
+    const retryAfter = Number(res.headers.get('retry-after'));
+    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+      ? retryAfter * 1_000
+      : Math.min(60_000, 2_000 * 2 ** attempt);
+    process.stderr.write(`  rate limited, waiting ${Math.round(waitMs / 1000)}s…\n`);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    return get<T>(url, attempt + 1);
+  }
+
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${await res.text()}`);
   return (await res.json()) as T;
 }

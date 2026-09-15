@@ -68,6 +68,11 @@ function build(opts: {
       // A $100 account cannot buy a single share at most prices, so the tests
       // use a larger one to exercise the logic rather than the account size.
       risk: { accountEquity: 10_000, maxPositionDollars: 2_000, maxPositionPercent: 20 },
+      // Pinned rather than inherited. These tests assert on specific prices to
+      // exercise the engine's mechanics, so they must not move when the
+      // default stop is retuned — that is a strategy decision, not an engine
+      // change, and it should not be able to break engine tests.
+      exit: { ...DEFAULT_TRADER_CONFIG.exit, stopLossPercent: 3 },
     }),
     config_or_empty(opts.config),
   );

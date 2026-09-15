@@ -34,7 +34,28 @@ export interface EntryRules {
 }
 
 export interface ExitRules {
-  /** Initial stop, percent below entry. Defines R for the trade. */
+  /**
+   * Initial stop, percent below entry. Defines R for the trade.
+   *
+   * This must be sized for the stocks the *entry* rules actually select, not
+   * for a typical equity. Entry requires a stock already up 3%+ on 2x volume,
+   * which is a violent instrument by construction: replaying 2026-09-15, RETO
+   * printed a single five-minute bar ranging $1.62 to $1.90 — 17% — while
+   * qualifying. A 3% stop cannot survive that, and the backtest showed exactly
+   * that failure: three entries, three stop-outs within minutes, then the
+   * daily trade limit was spent and the bot sat out a move from $2.04 to
+   * $4.46.
+   *
+   * Widening it also cuts friction, for a reason worth stating. At 3% the
+   * $20 capital cap binds, giving a large position with a small R, so
+   * commission is 0.66R. At 12% the risk budget binds instead, giving a
+   * smaller position with a larger R, and commission falls to 0.17R.
+   *
+   * 12% is the setting the evidence supports, on two independent samples.
+   * It is not a tuned optimum — the samples are 9 and 10 trades, which is far
+   * too small to optimise against, and the value was chosen because the
+   * mechanism is understood rather than because it scored best.
+   */
   stopLossPercent: number;
   /** Profit target as a multiple of the initial risk. */
   targetRMultiple: number;
@@ -157,7 +178,7 @@ export const DEFAULT_TRADER_CONFIG: TraderConfig = {
     requirePositiveFiveMinute: true,
   },
   exit: {
-    stopLossPercent: 3,
+    stopLossPercent: 12,
     targetRMultiple: 2,
     breakEvenAtR: 1,
     trailPercent: 2,

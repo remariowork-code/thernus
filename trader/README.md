@@ -58,6 +58,38 @@ Two other observations from the same run:
   into an ordinary pullback, every time. A grace period
   (`exit.momentumGraceMinutes`) now lets the stop define early risk instead.
 
+### Stop width
+
+The stop started at 3% and that was wrong. Replaying 2026-09-15 — a day when
+RETO ran +819% — the bot entered three times and was stopped out three times
+inside twenty minutes, then hit its daily trade limit and sat out the move from
+$2.04 to $4.46.
+
+The cause is a conflict between two rules. Entry selects stocks already up 3%+
+on 2× volume; a single five-minute RETO bar ranged $1.62–$1.90, or 17%. A 3%
+stop is inside the noise of the instruments the entry rules deliberately seek
+out.
+
+Widening it, on two independent samples:
+
+| Stop | 15 sessions, whole market | 2026-09-15, the four movers |
+|---|---|---|
+| 3% | -3.6%, 0/9 winners | -3.0%, 0/3 winners |
+| 8% | -2.5%, 0/9 winners | +3.0%, 2/3 winners |
+| 12% | **+0.7%, 2/10 winners** | +2.1%, 2/3 winners |
+| 15% | +1.6%, 3/10 winners | +2.8%, 3/3 winners |
+| 20% | not run | +0.3%, 1/3 winners |
+
+It also cuts friction, for a reason worth understanding. At a 3% stop the $20
+capital cap binds, giving a large position with a small R, so commission is
+0.66R. At 12% the risk budget binds instead, giving a smaller position with a
+larger R, and commission falls to **0.17R**. The break-even win rate drops from
+55% to 39%.
+
+The default is now 12%. It is **not** a tuned optimum — 9 and 10 trades are far
+too few to optimise against, and 15% scored better on both samples. 12% was
+chosen because the mechanism is understood, not because it won.
+
 ### What this means
 
 At $100, the cost structure is the dominant term, not the strategy. Options, in
@@ -125,9 +157,10 @@ the signal.
 Checked in this order, and the order is the safety property:
 
 1. **Kill switch** — nothing outranks it.
-2. **Stop loss** — 3% below entry. Checked *before* the target, because when a
+2. **Stop loss** — 12% below entry. Checked *before* the target, because when a
    bar straddles both, assuming the good outcome is how a backtest flatters
-   itself.
+   itself. The width is not arbitrary: entry selects stocks already up 3%+ on
+   2× volume, which are violent by construction. See *Stop width* below.
 3. **Profit target** — 2R.
 4. **End of day** — flattened 10 minutes before the close. Nothing is held
    overnight: a gap against an unattended position can exceed the stop by more
