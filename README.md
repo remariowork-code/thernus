@@ -508,6 +508,34 @@ than no scanner.
 
 ---
 
+## Finding what is moving
+
+The websocket scanner answers *"is the sector I chose moving?"*. It cannot
+answer *"what is moving?"* — the free plan streams thirty symbols, and a name
+that runs 40% in a session is rarely on a curated list beforehand.
+
+That cap is on the **stream**. REST snapshots take five hundred symbols per
+call, so the whole tradable universe is about twenty-seven calls:
+
+```bash
+npm run discover                    # one ranked scan of every US equity
+npm run discover -- --watch         # rescan every 5 minutes, flag new entrants
+npm run discover -- --min-price 1 --min-volume 100000 --top 40
+```
+
+Resolution is a scan interval rather than a tick, which is the trade. It is
+enough: a name climbing on heavy volume stays on the list for hours.
+
+Ranking is percentage move multiplied by volume against the previous full day,
+because neither alone is useful. Percentage by itself surfaces illiquid names
+that gapped and stopped; volume by itself surfaces mega-caps going nowhere. The
+price and volume floors exist for the same reason — a sub-dollar name on a few
+hundred shares produces enormous percentages from a single print.
+
+The two modes are meant to be used together: discovery finds candidates,
+`npm run universe -- set` puts the interesting ones in a sector, and the
+websocket watches them properly.
+
 ## Troubleshooting
 
 Two diagnostics answer most questions:

@@ -21,7 +21,8 @@
     "verify": "npm run typecheck && npm run lint && npm run test",
     "check:alpaca": "tsx scripts/check-alpaca.mjs",
     "check:redis": "tsx scripts/check-redis.mjs",
-    "universe": "tsx scripts/universe.mjs"
+    "universe": "tsx scripts/universe.mjs",
+    "discover": "tsx scripts/discover.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
