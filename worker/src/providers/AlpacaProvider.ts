@@ -444,7 +444,11 @@ export class AlpacaProvider implements IMarketDataProvider {
           timeframe: TIMEFRAME[timeframe],
           start: start.toISOString(),
           limit: String(Math.min(limit, 10_000)),
-          adjustment: 'raw',
+          // Split- and dividend-adjusted. Unadjusted series carry the raw
+          // price discontinuity across a corporate action — a reverse split
+          // reads as a four-figure percentage gain — which poisons the
+          // volatility baseline and the previous close derived from it.
+          adjustment: 'all',
           feed: this.feed,
           ...(pageToken ? { page_token: pageToken } : {}),
         },
