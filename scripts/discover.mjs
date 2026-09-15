@@ -23,7 +23,7 @@ const flag = (name, fallback) => {
   return i >= 0 && args[i + 1] ? Number(args[i + 1]) : fallback;
 };
 const WATCH = args.includes('--watch');
-const INTERVAL_MIN = flag('interval', 5);
+const INTERVAL_MIN = flag('interval', 3);
 const TOP = flag('top', 25);
 
 /**
