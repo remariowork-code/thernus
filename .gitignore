@@ -41,3 +41,8 @@ yarn-error.log*
 # Local environment variables (secrets)
 .env.local
 .env*.local
+
+# Trader runtime state
+trader/logs/
+trader/STOP
+worker-stop.log
