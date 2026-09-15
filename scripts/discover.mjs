@@ -65,6 +65,7 @@ async function tradableSymbols() {
 }
 
 async function scan(symbols) {
+  const todayNY = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
   const rows = [];
   for (let i = 0; i < symbols.length; i += CHUNK) {
     const res = await fetch(
@@ -76,9 +77,16 @@ async function scan(symbols) {
 
     for (const [sym, d] of Object.entries(body)) {
       const price = d?.latestTrade?.p;
-      const prev = d?.prevDailyBar?.c;
-      const today = d?.dailyBar?.v ?? 0;
-      const prevVol = d?.prevDailyBar?.v ?? 0;
+
+      // Before the open there is no bar for today: dailyBar is the previous
+      // session and prevDailyBar the one before it. Reading prevDailyBar as
+      // the previous close then reports a two-session move as today's, and
+      // the volume ratio compares two past days and never changes.
+      const dailyIsToday = d?.dailyBar?.t?.slice(0, 10) === todayNY;
+      const prev = (dailyIsToday ? d?.prevDailyBar?.c : d?.dailyBar?.c);
+      const today = dailyIsToday ? (d?.dailyBar?.v ?? 0) : 0;
+      const prevVol = (dailyIsToday ? d?.prevDailyBar?.v : d?.dailyBar?.v) ?? 0;
+
       if (!price || !prev || price < MIN_PRICE || today < MIN_VOLUME) continue;
 
       // A stale print is last session's close, not today's move.
@@ -110,6 +118,9 @@ function render(rows, previousTop) {
   const ranked = rows.filter((r) => r.pct > 0).sort((a, b) => score(b) - score(a)).slice(0, TOP);
 
   console.log(`\n${ny()} ET   ${rows.length} symbols passed the floors   feed=${FEED}`);
+  if (rows.length === 0) {
+    console.log('  (nothing yet — today\'s volume floor is not met before the open)');
+  }
   console.log('      SYMBOL     PRICE     $ CHG        %     VOL vs PREV DAY   TODAY VOL');
   for (const [i, r] of ranked.entries()) {
     const isNew = previousTop && !previousTop.has(r.sym);

@@ -22,6 +22,17 @@ function mockFetch(routes: Array<{ match: RegExp; body: unknown }>) {
 
 const credentials = { keyId: 'test-key', secretKey: 'test-secret' };
 
+/**
+ * Snapshot bars are identified by which session they belong to, not by a fixed
+ * calendar date: before the open Alpaca's `dailyBar` is the previous session
+ * and `prevDailyBar` the one before it, so a fixture pinned to a real date
+ * tests whichever branch happens to match the day the suite runs.
+ */
+const nyDate = (daysAgo = 0) => {
+  const d = new Date(Date.now() - daysAgo * 86_400_000);
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+};
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe('AlpacaProvider — snapshot mapping', () => {
@@ -33,8 +44,9 @@ describe('AlpacaProvider — snapshot mapping', () => {
           MU: {
             latestTrade: { p: 104.25, t: '2026-09-08T17:45:12.123456789Z' },
             latestQuote: { bp: 104.2, bs: 300, ap: 104.3, as: 200, t: '2026-09-08T17:45:12Z' },
-            dailyBar: { t: '2026-09-08T04:00:00Z', o: 100, h: 105, l: 99.5, c: 104.25, v: 8_400_000, vw: 102.4 },
-            prevDailyBar: { t: '2026-09-05T04:00:00Z', o: 98, h: 101, l: 97, c: 100, v: 7_000_000, vw: 99 },
+            // In session: dailyBar is today, so prevDailyBar is the previous close.
+            dailyBar: { t: `${nyDate(0)}T04:00:00Z`, o: 100, h: 105, l: 99.5, c: 104.25, v: 8_400_000, vw: 102.4 },
+            prevDailyBar: { t: `${nyDate(1)}T04:00:00Z`, o: 98, h: 101, l: 97, c: 100, v: 7_000_000, vw: 99 },
           },
         },
       },
@@ -66,8 +78,8 @@ describe('AlpacaProvider — snapshot mapping', () => {
       body: {
         MU: {
           latestTrade: { p: 104.25, t: '2026-09-08T17:45:12Z' },
-          dailyBar: { t: '', o: 100, h: 105, l: 99.5, c: 104.25, v: 8_400_000, vw: 102.4 },
-          prevDailyBar: { t: '', o: 98, h: 101, l: 97, c: 100, v: 7_000_000, vw: 99 },
+          dailyBar: { t: `${nyDate(0)}T04:00:00Z`, o: 100, h: 105, l: 99.5, c: 104.25, v: 8_400_000, vw: 102.4 },
+          prevDailyBar: { t: `${nyDate(1)}T04:00:00Z`, o: 98, h: 101, l: 97, c: 100, v: 7_000_000, vw: 99 },
         },
       },
     }]);
@@ -81,9 +93,9 @@ describe('AlpacaProvider — snapshot mapping', () => {
   it('batches the whole universe into one request rather than one per symbol', async () => {
     const symbols = Array.from({ length: 40 }, (_, i) => `S${i}`);
     const snapshots = Object.fromEntries(symbols.map((s) => [s, {
-      latestTrade: { p: 10, t: '2026-09-08T17:45:12Z' },
-      dailyBar: { t: '', o: 10, h: 10, l: 10, c: 10, v: 100, vw: 10 },
-      prevDailyBar: { t: '', o: 9, h: 9, l: 9, c: 9, v: 100, vw: 9 },
+      latestTrade: { p: 10, t: `${nyDate(0)}T17:45:12Z` },
+      dailyBar: { t: `${nyDate(0)}T04:00:00Z`, o: 10, h: 10, l: 10, c: 10, v: 100, vw: 10 },
+      prevDailyBar: { t: `${nyDate(1)}T04:00:00Z`, o: 9, h: 9, l: 9, c: 9, v: 100, vw: 9 },
     }]));
     // Wrapped shape still accepted, so either response works.
     const { calls } = mockFetch([{ match: /\/snapshots/, body: { snapshots } }]);
@@ -94,6 +106,30 @@ describe('AlpacaProvider — snapshot mapping', () => {
     // One batched call for 40 symbols, not 40 calls.
     expect(calls.length).toBe(1);
     expect(calls[0]).toContain('symbols=');
+  });
+
+  it('takes the previous close from the right bar before the open', async () => {
+    // Premarket: no bar exists for today, so dailyBar is yesterday's close and
+    // prevDailyBar is two sessions back. Reading prevDailyBar here reports a
+    // two-session move as today's — VEEA showed +168% against a true +83%.
+    mockFetch([{
+      match: /\/snapshots/,
+      body: {
+        VEEA: {
+          latestTrade: { p: 4.20, t: `${nyDate(0)}T13:23:31Z` },
+          dailyBar: { t: `${nyDate(1)}T04:00:00Z`, o: 1.74, h: 2.32, l: 1.74, c: 2.29, v: 54_439, vw: 2.0 },
+          prevDailyBar: { t: `${nyDate(4)}T04:00:00Z`, o: 1.62, h: 1.62, l: 1.62, c: 1.62, v: 574, vw: 1.62 },
+        },
+      },
+    }]);
+
+    const snapshot = await new AlpacaProvider({ ...credentials, symbols: ['VEEA'] }).getSnapshot('VEEA');
+
+    expect(snapshot.previousClose).toBe(2.29);
+    // Session figures belong to a session that has not started.
+    expect(snapshot.volume).toBe(0);
+    expect(snapshot.dayHigh).toBe(4.20);
+    expect(snapshot.dayLow).toBe(4.20);
   });
 
   it('rejects a symbol with no usable price rather than inventing zero', async () => {

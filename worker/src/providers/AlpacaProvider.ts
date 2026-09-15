@@ -408,19 +408,34 @@ export class AlpacaProvider implements IMarketDataProvider {
 
     if (!lastPrice) throw new Error(`Alpaca returned no price for ${symbol}`);
 
+    /**
+     * Which bar is "today" depends on whether the session has started.
+     *
+     * Before the open there is no bar for today: `dailyBar` is the *previous*
+     * session and `prevDailyBar` is the one before that. Taking prevDailyBar
+     * as the previous close then measures a two-session move — a warm-up run
+     * premarket had every symbol's change wrong for the whole day.
+     */
+    const todayNY = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const dailyIsToday = dailyBar?.t?.slice(0, 10) === todayNY;
+
+    const previousClose = (dailyIsToday ? prevDailyBar?.c : dailyBar?.c) ?? lastPrice;
+
     return {
       symbol,
       bidPrice: latestQuote?.bp ?? 0,
       bidSize: latestQuote?.bs ?? 0,
       askPrice: latestQuote?.ap ?? 0,
       askSize: latestQuote?.as ?? 0,
-      volume: dailyBar?.v ?? 0,
-      vwap: dailyBar?.vw ?? lastPrice,
+      // Session figures exist only once the session does. Premarket volume is
+      // not in dailyBar, and seeding yesterday's would overstate RVOL all day.
+      volume: dailyIsToday ? (dailyBar?.v ?? 0) : 0,
+      vwap: dailyIsToday ? (dailyBar?.vw ?? lastPrice) : lastPrice,
       lastPrice,
-      previousClose: prevDailyBar?.c ?? lastPrice,
-      dayHigh: dailyBar?.h ?? lastPrice,
-      dayLow: dailyBar?.l ?? lastPrice,
-      dayOpen: dailyBar?.o ?? lastPrice,
+      previousClose,
+      dayHigh: dailyIsToday ? (dailyBar?.h ?? lastPrice) : lastPrice,
+      dayLow: dailyIsToday ? (dailyBar?.l ?? lastPrice) : lastPrice,
+      dayOpen: dailyIsToday ? (dailyBar?.o ?? lastPrice) : lastPrice,
       timestamp: latestTrade ? toEpochMs(latestTrade.t) : Date.now(),
     };
   }
