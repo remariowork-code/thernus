@@ -440,6 +440,30 @@ This uses REST rather than the websocket deliberately: the free tier caps a
 stream at 30 symbols, which would mean deciding in advance which stocks are
 allowed to move.
 
+## Before you run Phase 2
+
+Two defects that only appear against a real broker were found and fixed after
+the first backtests, and they are worth understanding because the simulator
+could never have shown them:
+
+- **Asynchronous fills.** IBKR acknowledges an order immediately and reports
+  the fill later as an event. The engine originally read the status straight
+  back from `placeOrder`, saw `PENDING`, and treated it as a refusal — so every
+  entry would have left a live order working at the exchange while the engine
+  believed it held nothing, and every exit would have reported failure while
+  the sell actually executed. `waitForFill` is now part of the broker interface
+  and the engine settles every order before acting on it.
+- **Adopted positions had no stop.** A position recovered from the broker at
+  startup arrives with `stopPrice: 0`, because the broker knows what is held,
+  not what was intended. Every stop check is `price <= stopPrice` and no price
+  is at or below zero, so a restart silently converted a managed position into
+  an unmanaged one. Adopted positions are now given a stop anchored to their
+  actual cost basis.
+
+Both are covered by tests using a broker that fills asynchronously, which the
+paper broker cannot simulate — it fills synchronously, so an engine that is
+wrong about this looks correct against it.
+
 ## Known limitations
 
 - **Backtest fills are modelled.** Whole order at the bar close plus 0.15%
@@ -452,9 +476,13 @@ allowed to move.
 - **IEX is a sample** of the consolidated tape (~2–3%). RVOL is internally
   consistent because baseline and live both come from IEX, but absolute volumes
   are not comparable to other sources.
-- **No partial fills.** The simulator fills all or nothing. Real IBKR fills can
-  be partial, and the engine handles a partial as a failed entry rather than
-  managing the fragment.
+- **The simulator fills all or nothing.** Real fills can be partial. The engine
+  handles partials correctly — a partial entry keeps the shares that filled and
+  cancels the rest, a partial exit reduces the position and retries — but the
+  paper broker never produces one, so that path is exercised only by tests.
+- **`IbkrBroker` has never been connected to a running TWS.** It is written
+  against the documented API and typechecks against the library, but no order
+  has been sent through it. Phase 2 is the first real test of that file.
 - **Nine trades is not evidence of anything** about profitability.
 
 ## Tests

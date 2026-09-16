@@ -65,9 +65,32 @@ export class TradingEngine {
 
   /** Restores state a restart would otherwise lose. */
   async resume(): Promise<void> {
-    const { broker, log } = this.deps;
+    const { broker, log, config } = this.deps;
     const held = await broker.getPositions();
     for (const position of held) {
+      // A position recovered from the broker carries no stop: the broker knows
+      // what is held, not what the engine intended. Left at zero it would be
+      // unprotected, because every stop check is `price <= stopPrice` and no
+      // price is ever at or below zero — so a restart would silently convert a
+      // managed position into an unmanaged one. Any position arriving without
+      // a stop is given one now, anchored to its actual cost basis.
+      if (position.stopPrice <= 0) {
+        const stop = round2(position.entryPrice * (1 - config.exit.stopLossPercent / 100));
+        position.stopPrice = stop;
+        position.initialStopPrice = stop;
+        position.targetPrice = config.exit.targetRMultiple === null
+          ? 0
+          : round2(position.entryPrice + (position.entryPrice - stop) * config.exit.targetRMultiple);
+        position.highWaterMark = Math.max(position.highWaterMark, position.entryPrice);
+        log.record({
+          type: 'SESSION_START',
+          symbol: position.symbol,
+          message:
+            `Adopted ${position.quantity} ${position.symbol} from the broker at ` +
+            `$${position.entryPrice.toFixed(2)} with no stop recorded; ` +
+            `set one at $${stop.toFixed(2)}.`,
+        });
+      }
       this.positions.set(position.symbol, position);
     }
     const today = this.tradesOnDay();
@@ -257,35 +280,61 @@ export class TradingEngine {
       return false;
     }
 
-    if (order.status !== 'FILLED' || order.averageFillPrice === null) {
+    const settled = await broker
+      .waitForFill(order.clientOrderId, config.execution.fillTimeoutSeconds * 1_000)
+      .catch(() => null) ?? order;
+
+    if (settled.filledQuantity <= 0 || settled.averageFillPrice === null) {
+      // An exit that did not happen is the most dangerous state this system
+      // reaches, so it is loud and it counts towards the kill switch.
+      risk.recordFailure(config.execution.maxConsecutiveFailures, `exit ${position.symbol}`);
       log.record({
         type: 'ERROR',
         symbol: position.symbol,
         message:
-          `Exit order for ${position.symbol} came back ${order.status}` +
-          `${order.message ? `: ${order.message}` : ''}. Position still open.`,
-        data: { order },
+          `EXIT DID NOT FILL for ${position.symbol} (${settled.status})` +
+          `${settled.message ? `: ${settled.message}` : ''}. Position still open.`,
+        data: { order: settled },
       });
-      notify.send(`⚠️ Exit order for ${position.symbol} was ${order.status}`);
+      notify.send(`⚠️ Exit order for ${position.symbol} did not fill — still holding.`);
       return false;
     }
 
-    const exitPrice = order.averageFillPrice;
+    if (settled.filledQuantity < position.quantity) {
+      // Partially out. The remainder is still held and must stay managed, so
+      // the position is reduced rather than closed; the exit rule will fire
+      // again next cycle while it still says to leave.
+      const sold = settled.filledQuantity;
+      position.quantity -= sold;
+      position.updatedAt = at.toISOString();
+      log.record({
+        type: 'ORDER',
+        symbol: position.symbol,
+        message:
+          `Exit for ${position.symbol} filled ${sold} of ${sold + position.quantity}; ` +
+          `still holding ${position.quantity}, will retry next cycle.`,
+        data: { order: settled },
+      });
+      notify.send(`⚠️ Partial exit on ${position.symbol}: ${position.quantity} still held.`);
+      return false;
+    }
+
+    const exitPrice = settled.averageFillPrice;
     // Commission on both sides. On a small account this is not a rounding
     // error — a $0.35 minimum each way against a $20 position is 3.5% round
     // trip, which is larger than the profit target — so realised P&L is
     // reported net of it rather than as a gross price difference that the
     // account will never actually show.
-    const exitCommission = estimateCommission(order.filledQuantity, exitPrice, config.costs);
+    const exitCommission = estimateCommission(settled.filledQuantity, exitPrice, config.costs);
     const commission = round2(position.entryCommission + exitCommission);
-    const gross = (exitPrice - position.entryPrice) * order.filledQuantity;
+    const gross = (exitPrice - position.entryPrice) * settled.filledQuantity;
     const realizedPnl = round2(gross - commission);
     const risked = position.entryPrice - position.initialStopPrice;
     const rMultiple = risked > 0 ? (exitPrice - position.entryPrice) / risked : 0;
 
     const trade: ClosedTrade = {
       symbol: position.symbol,
-      quantity: order.filledQuantity,
+      quantity: settled.filledQuantity,
       entryPrice: position.entryPrice,
       entryAt: position.entryAt,
       entryReasons: position.entryReasons,
@@ -299,7 +348,7 @@ export class TradingEngine {
       exitPrice,
       exitAt: at.toISOString(),
       exitReason: reason,
-      exitOrderId: order.clientOrderId,
+      exitOrderId: settled.clientOrderId,
       realizedPnl,
       commission,
       rMultiple: round2(rMultiple),
@@ -438,24 +487,47 @@ export class TradingEngine {
       return null;
     }
 
-    if (order.status !== 'FILLED' || order.averageFillPrice === null) {
+    // Wait for the order to settle. A broker that acknowledges before it fills
+    // would otherwise be read as having refused the order.
+    const settled = await broker
+      .waitForFill(order.clientOrderId, config.execution.fillTimeoutSeconds * 1_000)
+      .catch(() => null) ?? order;
+
+    if (settled.filledQuantity <= 0 || settled.averageFillPrice === null) {
       log.record({
         type: 'ORDER',
         symbol,
         message:
-          `Entry order for ${symbol} came back ${order.status}` +
-          `${order.message ? `: ${order.message}` : ''}. No position opened.`,
-        data: { order },
+          `Entry order for ${symbol} did not fill (${settled.status})` +
+          `${settled.message ? `: ${settled.message}` : ''}. No position opened.`,
+        data: { order: settled },
       });
-      // Nothing was bought, so nothing is left dangling — but a resting order
-      // would be, and it must not be.
-      if (order.status === 'SUBMITTED' || order.status === 'PARTIAL') {
-        await broker.cancelOrder(order.clientOrderId).catch(() => {});
+      // Nothing was bought, but an unfilled order may still be live and must
+      // not be left working after the engine has stopped tracking it.
+      if (settled.status === 'SUBMITTED' || settled.status === 'PENDING') {
+        await broker.cancelOrder(settled.clientOrderId).catch(() => {});
       }
       return null;
     }
 
-    const fill = order.averageFillPrice;
+    if (settled.filledQuantity < settled.requestedQuantity) {
+      // Partially filled. The shares that DID fill are real and are held now,
+      // so the position is opened at that size rather than discarded — a
+      // discarded partial is stock the engine owns and does not know about,
+      // which is the worst state available. The remainder is cancelled so it
+      // cannot fill later into a position already being managed.
+      await broker.cancelOrder(settled.clientOrderId).catch(() => {});
+      log.record({
+        type: 'ORDER',
+        symbol,
+        message:
+          `Entry order for ${symbol} filled ${settled.filledQuantity} of ` +
+          `${settled.requestedQuantity}; cancelled the rest and kept what filled.`,
+        data: { order: settled },
+      });
+    }
+
+    const fill = settled.averageFillPrice;
     // The stop is recomputed from the actual fill, not the price that triggered
     // the signal. Anchoring risk to a price we did not pay understates it.
     const stopPrice = round2(fill * (1 - config.exit.stopLossPercent / 100));
@@ -465,7 +537,7 @@ export class TradingEngine {
 
     const position: Position = {
       symbol,
-      quantity: order.filledQuantity,
+      quantity: settled.filledQuantity,
       entryPrice: fill,
       entryAt: at.toISOString(),
       entryReasons: evaluation.reasons,
@@ -474,15 +546,15 @@ export class TradingEngine {
       targetPrice,
       highWaterMark: fill,
       stopRaised: false,
-      entryOrderId: order.clientOrderId,
-      entryCommission: estimateCommission(order.filledQuantity, fill, config.costs),
+      entryOrderId: settled.clientOrderId,
+      entryCommission: estimateCommission(settled.filledQuantity, fill, config.costs),
       lastKnownPrice: fill,
       updatedAt: at.toISOString(),
     };
 
     this.positions.set(symbol, position);
     this.tradesToday += 1;
-    log.recordEntry(position, order);
+    log.recordEntry(position, settled);
     return position;
   }
 

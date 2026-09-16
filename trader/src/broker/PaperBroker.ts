@@ -270,6 +270,11 @@ export class PaperBroker implements IBroker {
     return this.orders.get(clientOrderId) ?? null;
   }
 
+  /** Fills here are synchronous, so the order is already in its final state. */
+  async waitForFill(clientOrderId: string): Promise<Order | null> {
+    return this.orders.get(clientOrderId) ?? null;
+  }
+
   async cancelOrder(clientOrderId: string): Promise<void> {
     const order = this.orders.get(clientOrderId);
     if (!order) throw new BrokerError(`unknown order ${clientOrderId}`, 'UNKNOWN_ORDER');

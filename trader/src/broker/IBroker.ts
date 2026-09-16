@@ -28,6 +28,19 @@ export interface IBroker {
    */
   placeOrder(request: OrderRequest): Promise<Order>;
   getOrder(clientOrderId: string): Promise<Order | null>;
+
+  /**
+   * Block until an order reaches a terminal state, or the timeout expires.
+   *
+   * This is on the interface because "did it fill?" is not a question a broker
+   * can always answer synchronously. IBKR acknowledges an order immediately and
+   * reports the fill later as an event, so a caller that reads the status
+   * straight back from placeOrder sees PENDING and, if it treats that as a
+   * failure, ends up believing it holds nothing while a live order works at the
+   * exchange. Returns the order as it stands on timeout: not-yet-filled is a
+   * fact to act on, not an error.
+   */
+  waitForFill(clientOrderId: string, timeoutMs: number): Promise<Order | null>;
   cancelOrder(clientOrderId: string): Promise<void>;
 
   /** Last trade price, used for marking positions and evaluating exits. */
