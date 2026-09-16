@@ -12,7 +12,8 @@
  * gapped overnight.
  *
  *   npm run discover                 one scan, ranked
- *   npm run discover -- --watch      rescan every 5 minutes, flag new entrants
+ *   npm run discover -- --watch      rescan every 3 minutes, flag new entrants
+ *   npm run discover -- --watch --interval 1      rescan every minute
  *   npm run discover -- --min-price 1 --min-volume 100000
  */
 import { readFileSync } from 'node:fs';
@@ -134,6 +135,10 @@ function render(rows, previousTop) {
 const symbols = await tradableSymbols();
 console.log(`scanning ${symbols.length} tradable US equities`);
 console.log(`floors: price >= $${MIN_PRICE}, today volume >= ${MIN_VOLUME.toLocaleString()}`);
+if (WATCH) {
+  console.log(`watching: rescan every ${INTERVAL_MIN} minute${INTERVAL_MIN === 1 ? '' : 's'}` +
+    ' (change with --interval N)');
+}
 
 let previousTop = null;
 for (;;) {
@@ -141,5 +146,8 @@ for (;;) {
   previousTop = render(await scan(symbols), previousTop);
   console.log(`  scan took ${((Date.now() - started) / 1000).toFixed(0)}s`);
   if (!WATCH) break;
-  await new Promise((r) => setTimeout(r, INTERVAL_MIN * 60_000));
+  // Subtract the scan's own duration, otherwise a 40-second scan turns a
+  // 3-minute interval into 3 minutes 40 — and the drift compounds all session.
+  const wait = Math.max(5_000, INTERVAL_MIN * 60_000 - (Date.now() - started));
+  await new Promise((r) => setTimeout(r, wait));
 }
