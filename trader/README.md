@@ -21,64 +21,82 @@ Enabling live execution takes two deliberate steps and is described at the end.
 
 ## What the backtest found
 
-Fifteen sessions (late August – 15 September 2026), replaying the live rules
-against real minute bars with commissions modelled.
+Fifteen sessions (late August – 15 September 2026), whole market, replaying the
+live rules against real minute bars with commissions modelled.
 
 ### `penny`
 
 ```
-7 trades, 2 winners (29%), net +$0.41
-Equity: $100.00 → $100.41 (+0.4%)
-Break-even win rate: 29% (25% with no costs)
+8 trades, 2 winners (25%), net -$3.45
+Equity: $100.00 → $96.55 (-3.5%)
+Break-even win rate: 47% (41% with no costs)
 ```
 
-| Date | | | |
+| Date | | Position | Result |
 |---|---|---|---|
-| 28 Aug | FNGR | $0.56 → $0.49 | STOP_LOSS −1.01R |
-| 31 Aug | GPRO | $0.77 → $0.82 | END_OF_DAY +0.60R |
-| 1 Sep | LIDR | $1.60 → $1.47 | MOMENTUM_REVERSAL −0.70R |
-| 4 Sep | CDTG | $1.40 → $1.33 | MOMENTUM_REVERSAL −0.43R |
-| 8 Sep | MOBX | $1.42 → $1.25 | STOP_LOSS −1.01R |
-| 11 Sep | TRUG | $0.67 → $0.59 | STOP_LOSS −1.01R |
-| **15 Sep** | **RETO** | **$0.96 → $1.56** | **TRAILING_STOP +5.37R** |
+| 28 Aug | CHAI | 17 sh, $8.64 | STOP_LOSS −$1.17 |
+| 31 Aug | GPRO | 10 sh, $7.68 | END_OF_DAY **+$0.72** |
+| 1 Sep | GPRO | 5 sh, $7.66 | STOP_LOSS −$1.07 |
+| 4 Sep | CDTG | 5 sh, $7.01 | MOMENTUM_REVERSAL −$0.51 |
+| 8 Sep | MOBX | 5 sh, $7.11 | STOP_LOSS −$1.00 |
+| 9 Sep | SUNE | 2 sh, $7.39 | END_OF_DAY **+$1.54** |
+| 11 Sep | TRUG | 11 sh, $7.41 | STOP_LOSS −$1.06 |
+| 15 Sep | VEEA | 1 sh, $6.40 | STOP_LOSS −$0.90 |
 
-Read that table honestly. **Six of seven trades lost money. The entire result is
-one trade.** Without RETO the other six net −$4.16.
+### The most important row is 15 September
 
-That is not a bug — it is the shape the strategy is deliberately built for, and
-it is why `penny` has no fixed target. But it means the observed 29% win rate
-sits exactly *on* the 29% break-even line, so **no edge has been demonstrated**.
-Seven trades cannot distinguish a fat-tailed winner from a lucky one, and
-anyone claiming otherwise from this sample is guessing.
+That was the RETO day — RETO ran **+819%** and the bot never touched it. It
+bought VEEA at 10:24 ET and was stopped out at 10:47 for −$0.90. RETO did not
+qualify until **11:24 ET**, an hour later, and by then the profile's single
+daily trade was spent.
 
-What the run does establish is narrower and still useful: the profile now
-*finds* moves like RETO, entering at $0.96 rather than sitting the day out, and
-it does so within the PDT allowance on one trade per session.
+This matters more than the headline number, because it is the difference
+between a backtest and a fantasy. Run against a curated list —
+`--symbols RETO,MEDS,PDSB,BTCZ` — the same code returns **+$4.57 (+4.6%)**,
+buying RETO at $0.96 and trailing out at $1.56. That result is real arithmetic
+on real bars and it is still worthless as evidence, because it only happens if
+you already knew on the morning of the 15th which four stocks to watch.
+
+The live bot scans thirteen thousand names and cannot know. It takes the first
+thing that qualifies. With one trade a day, first-qualifier-wins is a weak
+allocation rule — but the alternatives are worse: waiting for a better setup
+that may never arrive means most days end with no trade at all. There is no fix
+here, only a trade-off, and the profile currently takes the early one.
+
+**If you want the honest answer to "what would $100 have done on 15 September":
+$99.10.** Not $104.57.
 
 ### `standard`
 
 ```
-6 trades, 0 winners (0%), net -$1.52
-Equity: $100.00 → $98.47 (-1.5%)
+6 trades, 0 winners (0%), net -$1.53
+Equity: $100.00 → $98.46 (-1.5%)
 Break-even win rate: 31% (25% with no costs)
 ```
 
-Losses are small (worst −0.16R) because the tighter stop does its job, but
-nothing reached a target. On this sample `standard` had no winners at all.
+Losses are small — the worst is −$0.37, and the tighter stop does its job — but
+nothing reached a target on this sample. It traded only two sessions of the
+fifteen, and never touched any of the penny movers, which is correct: a $5–$100
+band is a different market.
 
 ### Costs
 
-At $100 of capital the cost structure is a first-order term, not a detail. With
-the original 3% stop, commission was **0.66R per trade** against a 2R target —
-the break-even win rate moved from 33% to 55%. Widening the stop cut that to
-0.14–0.17R, for a structural reason worth understanding: at a 3% stop the $20
-capital cap binds, giving a large position with a small R; at 12% the risk
-budget binds instead, giving a smaller position with a larger R.
+At $100 of capital the cost structure is a first-order term. With the original
+3% stop, commission was **0.66R per trade** against a 2R target, moving the
+break-even win rate from 33% to 55%. Widening the stop cut it to 0.14–0.17R,
+for a structural reason: at a 3% stop the $20 capital cap binds, giving a large
+position with a small R; at 12% the risk budget binds instead, giving a smaller
+position with a larger R.
 
 One trade makes it concrete. BTBT was entered at $1.58 and exited at $1.60 — a
 **+0.53R gross winner** — and still lost money after commission.
 
 ### What this means
+
+Eight trades is not a sample. Neither is fifteen sessions. What the run does
+establish is narrower and still worth having: the rules execute correctly
+end-to-end on real data, the costs are now visible, and the failure modes are
+specific and named rather than hidden in an aggregate.
 
 Options, in descending order of honesty:
 
@@ -89,8 +107,7 @@ Options, in descending order of honesty:
 3. **Use a zero-commission broker at this size.** Alpaca charges nothing on US
    equities and is already connected for market data. The broker interface is
    one file.
-4. **Collect more data before believing any of these numbers.** Seven trades is
-   not a sample.
+4. **Collect far more data before believing any number here.**
 
 The code does not choose for you and does not hide the arithmetic.
 

@@ -151,3 +151,38 @@ describe('a position with no fixed target', () => {
     expect(d.newStopPrice).toBeGreaterThan(1);
   });
 });
+
+describe('replaying several symbols together', () => {
+  // Regression: the backtest used to step symbols by bar index rather than by
+  // time. Bars are sparse and each symbol has a different count — RETO printed
+  // 109 session bars on 2026-09-15 while PDSB printed 304 — so index-stepping
+  // ran them at different speeds and put the clock an hour out.
+  it('advances every symbol on one shared timeline', () => {
+    const sparse = ['09:35', '11:24', '15:30'];
+    const dense = ['09:31', '09:32', '09:33', '11:24', '11:25'];
+
+    const timeline = [...new Set([...sparse, ...dense])].sort();
+    expect(timeline).toEqual(['09:31', '09:32', '09:33', '09:35', '11:24', '11:25', '15:30']);
+
+    // At each stamp a symbol is positioned at its most recent bar at or before
+    // that time, never at "its nth bar".
+    const cursorAt = (bars: string[], stamp: string): number => {
+      let index = -1;
+      while (index + 1 < bars.length && bars[index + 1] <= stamp) index += 1;
+      return index;
+    };
+
+    // At 11:24 both symbols are genuinely at 11:24, not at unrelated points.
+    expect(sparse[cursorAt(sparse, '11:24')]).toBe('11:24');
+    expect(dense[cursorAt(dense, '11:24')]).toBe('11:24');
+
+    // The old index-based approach would have paired these, an hour apart.
+    expect(sparse[1]).toBe('11:24');
+    expect(dense[1]).toBe('09:32');
+
+    // A symbol with no bar yet is absent rather than borrowing another's.
+    expect(cursorAt(sparse, '09:31')).toBe(-1);
+    // And one that has stopped printing holds its last known bar.
+    expect(sparse[cursorAt(sparse, '23:00')]).toBe('15:30');
+  });
+});

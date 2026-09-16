@@ -132,6 +132,17 @@ async function findMoverDays(days: number, entryMin: number, minVolume: number):
   return byDay;
 }
 
+function nyTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-US', {
+    timeZone: 'America/New_York', hour12: false,
+  }).slice(0, 5);
+}
+
+/** Equity the position was sized against, for the "% of account" line. */
+function equityAtEntry(t: ClosedTrade, config: { risk: { accountEquity: number } }): number {
+  return config.risk.accountEquity;
+}
+
 function toBar(symbol: string, b: AlpacaBar): Bar {
   return {
     symbol, timestamp: Date.parse(b.t),
@@ -288,30 +299,49 @@ async function main(): Promise<void> {
     }
     if (prepared.size === 0) continue;
 
-    const longest = Math.max(...[...prepared.values()].map((p) => p.bars.length));
+    /**
+     * One timeline shared by every symbol.
+     *
+     * Symbols must advance together in wall-clock time, not in lockstep by bar
+     * index. Bars are sparse and each symbol has a different number of them —
+     * on 2026-09-15 RETO printed 109 session bars while PDSB printed 304 — so
+     * stepping by index runs them at different speeds, puts the clock an hour
+     * out, and lets a position be opened against one symbol's 11:24 while
+     * another symbol is still at 10:15.
+     */
+    const timeline = [...new Set(
+      [...prepared.values()].flatMap((p) => p.bars.map((b) => b.t)),
+    )].sort();
+    /** symbol -> index of its most recent bar at or before the current stamp. */
+    const cursor = new Map<string, number>();
 
-    for (let i = 0; i < longest; i += 1) {
-      const anyBar = [...prepared.values()].find((p) => p.bars[i]);
-      if (!anyBar) continue;
-      clock = new Date(anyBar.bars[i].t);
+    for (const stamp of timeline) {
+      clock = new Date(stamp);
       const { minutesOfDay } = nyParts(clock);
       const sinceOpen = minutesOfDay - (9 * 60 + 30);
       const toClose = 16 * 60 - minutesOfDay;
 
       for (const [symbol, prep] of prepared) {
-        if (prep.bars[i]) prices.set(symbol, prep.bars[i].c);
+        let index = cursor.get(symbol) ?? -1;
+        while (index + 1 < prep.bars.length && prep.bars[index + 1].t <= stamp) index += 1;
+        cursor.set(symbol, index);
+        if (index >= 0) prices.set(symbol, prep.bars[index].c);
       }
 
       // Exits first, exactly as the live engine does.
       for (const position of [...positions.values()]) {
         const prep = prepared.get(position.symbol);
-        const bar = prep?.bars[i];
-        if (!prep || !bar) continue;
+        const index = cursor.get(position.symbol) ?? -1;
+        if (!prep || index < 0) continue;
+        const bar = prep.bars[index];
 
-        const metrics = metricsAt(position.symbol, prep.bars, i, prep.profile, prep.previousClose);
+        // A bar counts as news only at the stamp it printed. Re-reading a
+        // stale bar's low every tick would trigger the same stop repeatedly.
+        const fresh = bar.t === stamp;
+        const metrics = metricsAt(position.symbol, prep.bars, index, prep.profile, prep.previousClose);
         // The bar's low is used for the stop: within a minute, the worst price
         // is the one that matters for an order resting at that level.
-        const stopHit = bar.l <= position.stopPrice;
+        const stopHit = fresh && bar.l <= position.stopPrice;
         const price = stopHit ? position.stopPrice : bar.c;
 
         const decision = evaluateExit(
@@ -350,7 +380,7 @@ async function main(): Promise<void> {
         }
 
         position.lastKnownPrice = bar.c;
-        position.highWaterMark = Math.max(position.highWaterMark, bar.h);
+        if (fresh) position.highWaterMark = Math.max(position.highWaterMark, bar.h);
         if (decision.newStopPrice !== undefined) {
           position.stopPrice = decision.newStopPrice;
           position.stopRaised = true;
@@ -361,9 +391,15 @@ async function main(): Promise<void> {
       if (toClose < config.execution.latestEntryMinutesBeforeClose) continue;
 
       const evaluations = [...prepared.entries()]
-        .filter(([, p]) => p.bars[i])
+        // Only symbols that actually printed at this stamp are candidates:
+        // acting on a stale bar would be trading on information that has not
+        // arrived yet in one direction and is minutes old in the other.
+        .filter(([symbol, p]) => {
+          const index = cursor.get(symbol) ?? -1;
+          return index >= 0 && p.bars[index].t === stamp;
+        })
         .map(([symbol, p]) => ({
-          metrics: metricsAt(symbol, p.bars, i, p.profile, p.previousClose),
+          metrics: metricsAt(symbol, p.bars, cursor.get(symbol)!, p.profile, p.previousClose),
         }))
         .map(({ metrics }) => ({ metrics, evaluation: evaluateEntry(metrics, config.entry) }));
 
@@ -420,9 +456,20 @@ async function main(): Promise<void> {
         `equity $${equity.toFixed(2)}`,
       );
       for (const t of dayTrades) {
+        const cost = t.entryPrice * t.quantity;
+        const proceeds = t.exitPrice * t.quantity;
         console.log(
-          `        ${t.symbol.padEnd(6)} ${t.entryPrice.toFixed(2)} → ${t.exitPrice.toFixed(2)}  ` +
-          `${t.exitReason.padEnd(17)} ${t.rMultiple >= 0 ? '+' : ''}${t.rMultiple.toFixed(2)}R`,
+          `        ${t.symbol.padEnd(6)} ${String(t.quantity).padStart(4)} sh  ` +
+          `$${t.entryPrice.toFixed(2)} → $${t.exitPrice.toFixed(2)}  ` +
+          `($${cost.toFixed(2)} → $${proceeds.toFixed(2)}, fees $${t.commission.toFixed(2)})  ` +
+          `${t.exitReason.padEnd(17)} ` +
+          `${t.realizedPnl >= 0 ? '+' : '-'}$${Math.abs(t.realizedPnl).toFixed(2)}  ` +
+          `${t.rMultiple >= 0 ? '+' : ''}${t.rMultiple.toFixed(2)}R`,
+        );
+        console.log(
+          `               in ${nyTime(t.entryAt)} ET, out ${nyTime(t.exitAt)} ET` +
+          `, held ${Math.round((Date.parse(t.exitAt) - Date.parse(t.entryAt)) / 60_000)}m` +
+          `, position was ${((cost / equityAtEntry(t, config)) * 100).toFixed(1)}% of the account`,
         );
       }
     }
