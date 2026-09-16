@@ -57,8 +57,15 @@ export interface ExitRules {
    * mechanism is understood rather than because it scored best.
    */
   stopLossPercent: number;
-  /** Profit target as a multiple of the initial risk. */
-  targetRMultiple: number;
+  /**
+   * Profit target as a multiple of the initial risk, or null for none.
+   *
+   * null means the trade is closed by the trailing stop, the clock or dying
+   * momentum, never by reaching a fixed level. A fixed target caps the upside
+   * at exactly the moment a position is working, which is the wrong trade on
+   * instruments whose whole appeal is the occasional outlier.
+   */
+  targetRMultiple: number | null;
   /** Move the stop to break-even once the trade is this many R ahead. */
   breakEvenAtR: number;
   /**
@@ -156,6 +163,8 @@ export interface TraderConfig {
   risk: RiskLimits;
   execution: ExecutionRules;
   costs: CostModel;
+  /** Which named profile produced these rules. */
+  profile: ProfileName;
   /**
    * Live order placement. Off by default and separately gated, because the
    * difference between simulation and real money should never be a typo.
@@ -212,6 +221,7 @@ export const DEFAULT_TRADER_CONFIG: TraderConfig = {
     minCommissionPerOrder: 0.35,
     maxCommissionPercent: 1,
   },
+  profile: 'standard',
   liveTrading: false,
 };
 
@@ -228,6 +238,100 @@ export function estimateCommission(
 }
 
 type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
+
+export type ProfileName = 'standard' | 'penny';
+
+/**
+ * Named rule sets for different kinds of instrument.
+ *
+ * The same rules cannot serve both. A sub-$5 stock running several hundred
+ * percent prints five-minute bars with a 17% range, so it needs a stop wide
+ * enough to survive one and a break-even rule that does not choke the position
+ * the moment it works. A $40 stock up 4% on an earnings beat does not move like
+ * that, and applying penny settings to it would mean risking 12% to make 8%.
+ *
+ * Choosing a profile is choosing what the bot hunts. It is not a tuning knob.
+ */
+export const PROFILES: Record<ProfileName, DeepPartial<TraderConfig>> = {
+  /**
+   * Mature movers: liquid, mid-priced names making an ordinary intraday move.
+   * Tighter everything, and a fixed target, because the tail is thinner — a
+   * $40 stock rarely triples, so waiting for a runner mostly means giving back
+   * gains that were there.
+   */
+  standard: {
+    profile: 'standard',
+    entry: {
+      minPrice: 5,
+      maxPrice: 100,
+      minDayVolume: 500_000,
+      minChangePercent: 3,
+      minRvol: 2,
+      minMomentumScore: 60,
+      maxDistanceFromHighPercent: 2,
+    },
+    exit: {
+      stopLossPercent: 8,
+      targetRMultiple: 3,
+      breakEvenAtR: 2,
+      trailPercent: 3,
+      maxHoldMinutes: 120,
+      momentumGraceMinutes: 15,
+    },
+    execution: { scanIntervalMinutes: 5 },
+  },
+
+  /**
+   * Explosive low-priced movers — the RETO case.
+   *
+   * Every setting here is a consequence of one fact: these instruments are
+   * enormously more volatile than the rules were originally written for.
+   *
+   *  - The stop is wide because a single five-minute bar can range 17%.
+   *  - Break-even is deferred to 5R because moving the stop to entry at 1R
+   *    turns a 12% stop into a 0% stop. On 2026-09-15 that one rule was the
+   *    difference between exiting RETO at $1.95 and riding it to $4.36.
+   *  - There is no fixed target, because the entire edge is the rare trade
+   *    that goes several hundred percent, and a 2R target throws it away.
+   *  - Entry demands a much larger move and far higher relative volume: at
+   *    this price point a 3% move on 2x volume is noise.
+   *  - The scan runs more often because the move develops in minutes.
+   *  - One trade per day, because FINRA allows three day trades per five
+   *    business days and spending the week's allowance on one name's
+   *    re-entries is how the next four sessions get missed.
+   */
+  penny: {
+    profile: 'penny',
+    entry: {
+      minPrice: 0.5,
+      maxPrice: 10,
+      // Cumulative volume so far today, NOT the day's eventual total. A floor
+      // near the whole session's volume means a stock only qualifies in the
+      // last hour: RETO trades 1.2M all day, so a 1M floor delayed entry from
+      // 11:24 to 15:00 and missed the move entirely. RVOL carries the real
+      // "is this unusual" test, and it is time-of-day normalised.
+      minDayVolume: 200_000,
+      minChangePercent: 15,
+      minRvol: 5,
+      minMomentumScore: 65,
+      maxDistanceFromHighPercent: 3,
+    },
+    exit: {
+      stopLossPercent: 12,
+      targetRMultiple: null,
+      breakEvenAtR: 5,
+      trailPercent: 2,
+      maxHoldMinutes: 360,
+      momentumGraceMinutes: 20,
+    },
+    risk: { maxTradesPerDay: 1, maxOpenPositions: 1 },
+    execution: { scanIntervalMinutes: 3 },
+  },
+};
+
+export function isProfileName(value: string): value is ProfileName {
+  return value === 'standard' || value === 'penny';
+}
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -250,24 +354,35 @@ export function mergeTraderConfig(
 
 let cached: TraderConfig | null = null;
 
-export function getTraderConfig(): TraderConfig {
+/**
+ * The active rules: defaults, then the profile, then TRADER_CONFIG, then the
+ * live-trading gate. Later layers win, so an explicit override always beats a
+ * profile and the gate always beats both.
+ */
+export function getTraderConfig(profileName?: ProfileName): TraderConfig {
   if (cached) return cached;
 
-  let config = DEFAULT_TRADER_CONFIG;
+  const resolved: ProfileName = profileName
+    ?? (process.env.TRADER_PROFILE && isProfileName(process.env.TRADER_PROFILE)
+      ? process.env.TRADER_PROFILE
+      : 'standard');
+
+  let config = mergeTraderConfig(DEFAULT_TRADER_CONFIG, PROFILES[resolved]);
+  const base = config;
   const raw = process.env.TRADER_CONFIG;
   if (raw) {
     try {
-      config = mergeTraderConfig(DEFAULT_TRADER_CONFIG, JSON.parse(raw));
+      config = mergeTraderConfig(base, JSON.parse(raw));
     } catch {
       // A malformed override must not silently become live-trading defaults.
-      config = DEFAULT_TRADER_CONFIG;
+      config = base;
     }
   }
 
   // Live trading needs two independent switches set. One of them is an
   // environment variable that says the word out loud.
   const armed = process.env.TRADER_LIVE === 'I_UNDERSTAND_THIS_TRADES_REAL_MONEY';
-  cached = { ...config, liveTrading: config.liveTrading && armed };
+  cached = { ...config, profile: resolved, liveTrading: config.liveTrading && armed };
   return cached;
 }
 
@@ -279,6 +394,7 @@ export function resetTraderConfig(): void {
 /** Renders the active rules as prose, for the startup log and the audit trail. */
 export function describeConfig(c: TraderConfig): string[] {
   return [
+    `Profile: ${c.profile}.`,
     `Enter when: change >= ${c.entry.minChangePercent}%, RVOL >= ${c.entry.minRvol}x, ` +
       `momentum >= ${c.entry.minMomentumScore}` +
       `${c.entry.requireAboveVwap ? ', price above VWAP' : ''}` +
@@ -288,7 +404,10 @@ export function describeConfig(c: TraderConfig): string[] {
       `${c.entry.minDayVolume.toLocaleString()} shares traded today.`,
     `Size: risk ${c.risk.riskPercentPerTrade}% of $${c.risk.accountEquity} per trade, ` +
       `position capped at ${c.risk.maxPositionPercent}% or $${c.risk.maxPositionDollars}.`,
-    `Exit: stop ${c.exit.stopLossPercent}% below entry, target ${c.exit.targetRMultiple}R, ` +
+    `Exit: stop ${c.exit.stopLossPercent}% below entry, ` +
+      `${c.exit.targetRMultiple === null
+        ? 'no fixed target (trail only)'
+        : `target ${c.exit.targetRMultiple}R`}, ` +
       `break-even at ${c.exit.breakEvenAtR}R, then trail ${c.exit.trailPercent}%. ` +
       `Force close after ${c.exit.maxHoldMinutes}m or ${c.exit.closeAllBeforeCloseMinutes}m before the bell.`,
     `Limits: ${c.risk.maxTradesPerDay} trades/day, ${c.risk.maxOpenPositions} open at once, ` +

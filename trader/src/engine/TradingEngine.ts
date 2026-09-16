@@ -459,7 +459,9 @@ export class TradingEngine {
     // The stop is recomputed from the actual fill, not the price that triggered
     // the signal. Anchoring risk to a price we did not pay understates it.
     const stopPrice = round2(fill * (1 - config.exit.stopLossPercent / 100));
-    const targetPrice = round2(fill + (fill - stopPrice) * config.exit.targetRMultiple);
+    const targetPrice = config.exit.targetRMultiple === null
+      ? 0
+      : round2(fill + (fill - stopPrice) * config.exit.targetRMultiple);
 
     const position: Position = {
       symbol,

@@ -21,42 +21,140 @@ Enabling live execution takes two deliberate steps and is described at the end.
 
 ## What the backtest found
 
-Over fifteen sessions (August–September 2026), replaying the live rules against
-real minute bars with commissions modelled:
+Fifteen sessions (late August – 15 September 2026), replaying the live rules
+against real minute bars with commissions modelled.
+
+### `penny`
 
 ```
-9 trades, 0 winners (0%), net -$3.68
-Equity: $100.00 → $96.37 (-3.6%)
-
-Gross P&L -$0.91, commission -$2.71 over 9 trades ($0.30 each)
-Commission is 0.66R per trade against a 2R target
-Break-even win rate: 55% (it would be 33% with no costs)
+7 trades, 2 winners (29%), net +$0.41
+Equity: $100.00 → $100.41 (+0.4%)
+Break-even win rate: 29% (25% with no costs)
 ```
 
-Read that carefully, because the headline number is not the interesting part.
+| Date | | | |
+|---|---|---|---|
+| 28 Aug | FNGR | $0.56 → $0.49 | STOP_LOSS −1.01R |
+| 31 Aug | GPRO | $0.77 → $0.82 | END_OF_DAY +0.60R |
+| 1 Sep | LIDR | $1.60 → $1.47 | MOMENTUM_REVERSAL −0.70R |
+| 4 Sep | CDTG | $1.40 → $1.33 | MOMENTUM_REVERSAL −0.43R |
+| 8 Sep | MOBX | $1.42 → $1.25 | STOP_LOSS −1.01R |
+| 11 Sep | TRUG | $0.67 → $0.59 | STOP_LOSS −1.01R |
+| **15 Sep** | **RETO** | **$0.96 → $1.56** | **TRAILING_STOP +5.37R** |
 
-**Three-quarters of the loss is commission, not the strategy.** The trading
-decisions lost $0.91. Costs took $2.71. At $100 of capital with a $20 maximum
-position, IBKR's 1%-of-value commission cap applies on the way in and again on
-the way out, so every trade starts 2% behind. In risk terms that is 0.66R of
-friction per trade, which moves the win rate needed to break even from 33% to
-55% — the strategy has to be substantially better than a coin flip just to
-stand still.
+Read that table honestly. **Six of seven trades lost money. The entire result is
+one trade.** Without RETO the other six net −$4.16.
 
-One trade makes this concrete. BTBT was entered at $1.58 and exited at $1.60 —
-a **+0.53R gross winner** — and still lost money after commission.
+That is not a bug — it is the shape the strategy is deliberately built for, and
+it is why `penny` has no fixed target. But it means the observed 29% win rate
+sits exactly *on* the 29% break-even line, so **no edge has been demonstrated**.
+Seven trades cannot distinguish a fat-tailed winner from a lucky one, and
+anyone claiming otherwise from this sample is guessing.
 
-Two other observations from the same run:
+What the run does establish is narrower and still useful: the profile now
+*finds* moves like RETO, entering at $0.96 rather than sitting the day out, and
+it does so within the PDT allowance on one trade per session.
 
-- **The sample is nine trades.** That is far too small to judge an edge. It is
-  large enough to expose structural problems, which is what it was used for.
-- **The original exit rules were broken and the backtest found it.** Seven of
-  nine exits fired on `MOMENTUM_REVERSAL` within minutes, and not one trade
-  reached its stop or its target. The entry condition requires a stock to be
-  near its high with strong one-minute momentum — a moment, not a state — so
-  the score collapsed the instant the stock paused and the position was sold
-  into an ordinary pullback, every time. A grace period
-  (`exit.momentumGraceMinutes`) now lets the stop define early risk instead.
+### `standard`
+
+```
+6 trades, 0 winners (0%), net -$1.52
+Equity: $100.00 → $98.47 (-1.5%)
+Break-even win rate: 31% (25% with no costs)
+```
+
+Losses are small (worst −0.16R) because the tighter stop does its job, but
+nothing reached a target. On this sample `standard` had no winners at all.
+
+### Costs
+
+At $100 of capital the cost structure is a first-order term, not a detail. With
+the original 3% stop, commission was **0.66R per trade** against a 2R target —
+the break-even win rate moved from 33% to 55%. Widening the stop cut that to
+0.14–0.17R, for a structural reason worth understanding: at a 3% stop the $20
+capital cap binds, giving a large position with a small R; at 12% the risk
+budget binds instead, giving a smaller position with a larger R.
+
+One trade makes it concrete. BTBT was entered at $1.58 and exited at $1.60 — a
+**+0.53R gross winner** — and still lost money after commission.
+
+### What this means
+
+Options, in descending order of honesty:
+
+1. **Treat it as an experiment, not an income source.** This is what the brief
+   describes and what the code is built for.
+2. **Raise the capital.** The 1% commission cap stops binding around $35 per
+   position.
+3. **Use a zero-commission broker at this size.** Alpaca charges nothing on US
+   equities and is already connected for market data. The broker interface is
+   one file.
+4. **Collect more data before believing any of these numbers.** Seven trades is
+   not a sample.
+
+The code does not choose for you and does not hide the arithmetic.
+
+### Profiles
+
+Two rule sets, because one cannot serve both kinds of instrument.
+
+```bash
+npm run trader:sim                      # standard
+npm run trader:sim -- --profile penny   # penny
+npm run trader:penny                    # same thing
+```
+
+| | `standard` | `penny` |
+|---|---|---|
+| Price band | $5–$100 | $0.50–$10 |
+| Min change | 3% | **15%** |
+| Min RVOL | 2× | **5×** |
+| Volume floor (cumulative today) | 500,000 | 200,000 |
+| Stop | 8% | **12%** |
+| Target | 3R | **none — trail only** |
+| Break-even at | 2R | **5R** |
+| Trail | 3% | 2% |
+| Max hold | 120 min | 360 min |
+| Trades/day | 3 | **1** |
+| Scan interval | 5 min | 3 min |
+
+Every penny setting follows from one fact: these instruments are far more
+volatile than the rules were first written for. RETO printed a five-minute bar
+ranging $1.62–$1.90 — 17% — while qualifying.
+
+The two settings that matter most:
+
+- **Break-even deferred to 5R.** Moving the stop to entry at 1R converts a 12%
+  stop into a 0% stop. On 2026-09-15 that single rule was the difference
+  between exiting RETO at $1.95 and riding it to $4.36.
+- **No fixed target.** The entire edge is the rare trade that runs several
+  hundred percent. A 2R target throws it away by construction.
+
+One trade per day is not timidity — FINRA permits three day trades per five
+*business* days under $25,000, so three re-entries on one name spends the whole
+week's allowance on a single session.
+
+#### Diagnosing a missed trade
+
+```bash
+npm run trader:explain -- --symbol RETO --profile penny
+npm run trader:explain -- --symbol RETO --date 2026-09-15 --profile penny
+```
+
+Replays one symbol minute by minute and tallies which conditions blocked it.
+This is how the penny volume floor was found to be wrong: `minDayVolume` is
+*cumulative volume so far today*, not the day's eventual total, so a 1,000,000
+floor on a stock that trades 1.2M all session delayed entry from 11:24 to
+mid-afternoon and missed the move entirely.
+
+```
+RETO on 2026-09-15 — penny profile
+104 minutes evaluated, 0 qualified.
+
+    91   88%  volume >= 1,000,000          ██████████████████████████
+    75   72%  within 3% of high            ██████████████████████
+    34   33%  momentum >= 65               ██████████
+```
 
 ### Stop width
 

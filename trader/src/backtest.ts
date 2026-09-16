@@ -24,7 +24,9 @@
  */
 import { TradeLog } from './audit/TradeLog';
 import { PaperBroker } from './broker/PaperBroker';
-import { estimateCommission, getTraderConfig, describeConfig } from './config';
+import {
+  describeConfig, estimateCommission, getTraderConfig, isProfileName, type ProfileName,
+} from './config';
 import { evaluateEntry, rankCandidates } from './engine/EntryRules';
 import { evaluateExit } from './engine/ExitRules';
 import { RiskManager } from './engine/RiskManager';
@@ -198,7 +200,11 @@ function metricsAt(
 async function main(): Promise<void> {
   if (!HEADERS['APCA-API-KEY-ID']) throw new Error('ALPACA_API_KEY_ID is not set.');
 
-  const config = getTraderConfig();
+  const profileArg = arg('profile', 'standard');
+  if (!isProfileName(profileArg)) {
+    throw new Error(`unknown profile "${profileArg}". Use standard or penny.`);
+  }
+  const config = getTraderConfig(profileArg as ProfileName);
   const days = Number(arg('days', '10'));
   const explicit = arg('symbols', '');
 
@@ -394,7 +400,9 @@ async function main(): Promise<void> {
           symbol: metrics.symbol, quantity: order.filledQuantity, entryPrice: fill,
           entryAt: clock.toISOString(), entryReasons: evaluation.reasons,
           stopPrice, initialStopPrice: stopPrice,
-          targetPrice: Math.round((fill + (fill - stopPrice) * config.exit.targetRMultiple) * 100) / 100,
+          targetPrice: config.exit.targetRMultiple === null
+            ? 0
+            : Math.round((fill + (fill - stopPrice) * config.exit.targetRMultiple) * 100) / 100,
           highWaterMark: fill, stopRaised: false, entryOrderId: order.clientOrderId,
           entryCommission: broker.lastFillCommission(),
           lastKnownPrice: fill, updatedAt: clock.toISOString(),
@@ -442,12 +450,19 @@ async function main(): Promise<void> {
       return sum + (risk > 0 ? t.commission / risk : 0);
     }, 0) / trades.length;
 
-    const target = config.exit.targetRMultiple;
-    // Win rate needed to break even: wins pay (target - cost), losses cost
-    // (1 + cost), both measured in R.
+    // With no fixed target the payoff is whatever the trail delivered, so the
+    // break-even sum uses the observed average win rather than a planned one.
+    const winners = trades.filter((t) => t.rMultiple > 0);
+    const target = config.exit.targetRMultiple
+      ?? (winners.length > 0
+        ? winners.reduce((sum, t) => sum + t.rMultiple, 0) / winners.length
+        : 0);
     const win = target - costInR;
     const loss = 1 + costInR;
     const breakeven = win > 0 ? (loss / (win + loss)) * 100 : 100;
+    const targetLabel = config.exit.targetRMultiple === null
+      ? `${target.toFixed(2)}R average winner (no fixed target)`
+      : `${target}R target`;
 
     console.log(
       `\nGross P&L ${gross >= 0 ? '+' : '-'}$${Math.abs(gross).toFixed(2)}, ` +
@@ -455,7 +470,7 @@ async function main(): Promise<void> {
       `($${(totalCommission / trades.length).toFixed(2)} each).`,
     );
     console.log(
-      `Commission is ${costInR.toFixed(2)}R per trade against a ${target}R target, ` +
+      `Commission is ${costInR.toFixed(2)}R per trade against a ${targetLabel}, ` +
       `so a winner nets ${win.toFixed(2)}R and a loser costs ${loss.toFixed(2)}R.`,
     );
     console.log(

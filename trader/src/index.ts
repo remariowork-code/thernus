@@ -18,7 +18,7 @@ import { IbkrBroker } from './broker/IbkrBroker';
 import { PaperBroker } from './broker/PaperBroker';
 import type { IBroker } from './broker/IBroker';
 import { TradeLog } from './audit/TradeLog';
-import { describeConfig, getTraderConfig } from './config';
+import { describeConfig, getTraderConfig, isProfileName, type ProfileName } from './config';
 import { RiskManager } from './engine/RiskManager';
 import { TradingEngine } from './engine/TradingEngine';
 import { createNotifier } from './notify/Notifier';
@@ -44,9 +44,20 @@ function requireEnv(...names: string[]): string {
   throw new Error(`none of ${names.join(', ')} is set.`);
 }
 
+/** `--profile penny`, else TRADER_PROFILE, else standard. */
+function parseProfile(): ProfileName {
+  const index = process.argv.indexOf('--profile');
+  const raw = index >= 0 ? process.argv[index + 1] : process.env.TRADER_PROFILE;
+  if (!raw) return 'standard';
+  if (!isProfileName(raw)) {
+    throw new Error(`unknown profile "${raw}". Use standard or penny.`);
+  }
+  return raw;
+}
+
 async function main(): Promise<void> {
   const mode = parseMode(process.argv[2] ?? process.env.TRADER_MODE);
-  const config = getTraderConfig();
+  const config = getTraderConfig(parseProfile());
 
   if (mode === 'live' && !config.liveTrading) {
     // Two independent switches, and this is the one that has to be said out
@@ -83,7 +94,7 @@ async function main(): Promise<void> {
         priceFeed: (symbol) => data.getMetrics(symbol).then((m) => m?.price ?? null),
       });
 
-  console.log(`\nThernus trader — ${mode} mode, broker: ${broker.name}`);
+  console.log(`\nThernus trader — ${mode} mode, ${config.profile} profile, broker: ${broker.name}`);
   for (const line of describeConfig(config)) console.log(`  ${line}`);
   console.log(`  Notifications: ${notify.name}. Kill switch: create ${KILL_SWITCH_FILE}\n`);
 
@@ -97,10 +108,11 @@ async function main(): Promise<void> {
 
   log.record({
     type: 'SESSION_START',
-    message: `Started in ${mode} mode against ${broker.name}, scanning every ` +
+    message: `Started in ${mode} mode on the ${config.profile} profile against ` +
+      `${broker.name}, scanning every ` +
       `${config.execution.scanIntervalMinutes} minutes.`,
   });
-  notify.send(`▶️ Thernus trader started — ${mode} mode, ${broker.name}.`);
+  notify.send(`▶️ Thernus trader started — ${mode} mode, ${config.profile} profile, ${broker.name}.`);
 
   let stopping = false;
 

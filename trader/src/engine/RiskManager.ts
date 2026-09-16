@@ -103,7 +103,8 @@ export class RiskManager {
     symbol: string,
     price: number,
     stopPercent: number,
-    targetRMultiple: number,
+    /** null means no fixed target; the trail and the clock close the trade. */
+    targetRMultiple: number | null,
     ctx: RiskContext,
   ): RiskDecision {
     const refuse = (reason: string): RiskDecision => ({
@@ -184,7 +185,11 @@ export class RiskManager {
     }
 
     const riskAmount = round2(riskPerShare * quantity);
-    const targetPrice = round2(price + riskPerShare * targetRMultiple);
+    // A zero target is the engine-wide signal for "no fixed target": every
+    // exit check guards on targetPrice > 0.
+    const targetPrice = targetRMultiple === null
+      ? 0
+      : round2(price + riskPerShare * targetRMultiple);
     const limiting = byRisk <= byCapital ? 'risk budget' : 'capital cap';
 
     return {
