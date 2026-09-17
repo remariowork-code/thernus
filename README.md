@@ -640,3 +640,37 @@ per transition, and that re-injecting an identical tape emits nothing further.
 - **A restarted worker does not backfill.** It counts only volume it observed,
   so a mid-session gap understates RVOL until the next session. Restarting
   re-reads the provider snapshot and recovers what that exposes.
+
+## Overnight gap scanner
+
+```bash
+npm run overnight                          # after 16:00 ET
+npm run overnight -- --date 2026-09-14     # replay a past evening
+npm run overnight -- --verify 12           # score itself against what happened next
+```
+
+Runs after the close and ranks names that had an unusual session *and* kept
+trading after the bell, annotated with whatever news the feed carried. The
+premise is VEEA: +41% on 127× normal volume, term sheet released at ~16:42,
++24% after hours, and it opened the next morning +89%.
+
+**Check `--verify` before acting on it.** Over twelve evenings:
+
+```
+19 candidates, gapped up 8/19 (42%)
+Mean gap +6.0%, median -1.7%, worst -35.1%, best +89.1%
+```
+
+A mean well above the median means the average is carried by one or two names —
+here VEEA +89%, GPRO +58%, TNON +55% against losses of −35%, −25%, −15%. Buying
+every candidate is viable only if the winners keep paying for the rest, and
+nineteen observations cannot tell you whether they will.
+
+Ranking is on after-hours *participation*, not the after-hours percentage: a
+60% move on four hundred shares is one order. Financings (`DILUTION`) are scored
+down rather than up — a stock higher after hours on a priced offering is higher
+because the offering was priced at a discount.
+
+Note that Alpaca's news feed carries wire coverage, not primary releases: the
+VEEA term sheet went out on GlobeNewswire and never appeared. `no news on feed`
+means the feed was empty, not that there was no catalyst.

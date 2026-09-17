@@ -29,7 +29,8 @@
     "trader:live": "tsx trader/src/index.ts live",
     "trader:backtest": "tsx trader/src/backtest.ts",
     "trader:penny": "tsx trader/src/index.ts sim --profile penny",
-    "trader:explain": "tsx trader/src/explain.ts"
+    "trader:explain": "tsx trader/src/explain.ts",
+    "overnight": "node scripts/overnight.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
