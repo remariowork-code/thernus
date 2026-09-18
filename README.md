@@ -657,8 +657,8 @@ premise is VEEA: +41% on 127× normal volume, term sheet released at ~16:42,
 **Check `--verify` before acting on it.** Over twelve evenings:
 
 ```
-19 candidates, gapped up 8/19 (42%)
-Mean gap +6.0%, median -1.7%, worst -35.1%, best +89.1%
+19 candidates, gapped up 9/19 (47%)
+Mean gap +8.6%, median -1.4%, worst -35.1%, best +89.1%
 ```
 
 A mean well above the median means the average is carried by one or two names —

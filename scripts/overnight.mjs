@@ -51,7 +51,7 @@ const MIN_PRICE = flag('min-price', 0.5);
 const MAX_PRICE = flag('max-price', 500);
 /** The session itself has to have been unusual, or there is nothing to follow. */
 const MIN_DAY_PCT = flag('min-day-pct', 10);
-const MIN_DAY_VOLUME = flag('min-day-volume', 20_000);
+const MIN_DAY_VOLUME = flag('min-day-volume', 10_000);
 /** After-hours move worth reporting. */
 const MIN_AH_PCT = flag('min-ah-pct', 3);
 /** Below this, an after-hours percentage is one print and means nothing. */

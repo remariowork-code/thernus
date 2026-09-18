@@ -27,9 +27,9 @@ live rules against real minute bars with commissions modelled.
 ### `penny`
 
 ```
-8 trades, 2 winners (25%), net -$3.45
-Equity: $100.00 → $96.55 (-3.5%)
-Break-even win rate: 47% (41% with no costs)
+9 trades, 1 winner (11%), net -$3.57
+Equity: $100.00 → $96.43 (-3.6%)
+Break-even win rate: 51% (44% with no costs)
 ```
 
 | Date | | Position | Result |
@@ -69,8 +69,8 @@ $99.10.** Not $104.57.
 ### `standard`
 
 ```
-6 trades, 0 winners (0%), net -$1.53
-Equity: $100.00 → $98.46 (-1.5%)
+8 trades, 0 winners (0%), net -$2.65
+Equity: $100.00 → $97.33 (-2.7%)
 Break-even win rate: 31% (25% with no costs)
 ```
 
@@ -78,6 +78,39 @@ Losses are small — the worst is −$0.37, and the tighter stop does its job �
 nothing reached a target on this sample. It traded only two sessions of the
 fifteen, and never touched any of the penny movers, which is correct: a $5–$100
 band is a different market.
+
+### Volume floors, and why scanners and the trader differ
+
+Three separate detections were lost to volume floors set by instinct: the
+penny profile's 200,000 made VEEA unreachable on a day it traded a hundred
+times normal, the premarket 1,000,000 pushed RETO's entry from 11:24 to
+mid-afternoon, and `discover`'s 50,000 missed GIPR on the session that was its
+only advance warning before it opened up 173%.
+
+The common error is calibrating against IEX, which carries a few percent of
+the consolidated tape — a 200,000 floor there is really demanding several
+million real shares. At $100 of capital, where a position is one to twenty
+shares, liquidity is never the binding constraint anyway. RVOL is the test
+that actually separates unusual from ordinary, and it is sample-invariant
+because its baseline comes from the same feed.
+
+Lowering them helped the scanners and did not help the trader:
+
+| | before | after |
+|---|---|---|
+| `overnight --verify` | 8/19 up, mean +6.0% | **9/19 up, mean +8.6%** |
+| `penny` 15 sessions | -3.5%, 8 trades | -3.6%, 9 trades |
+| `standard` 15 sessions | -1.5%, 6 trades | -2.7%, 8 trades |
+
+That split is the expected one rather than a disappointment. A scanner's job is
+recall: surface everything a human might want to look at, and let them discard.
+The trader's job is precision: it acts on everything it finds, so a marginal
+candidate is a real loss rather than a line to skim past. The floors are set
+accordingly — 10,000 for the scanners, 20,000 for the penny profile, which is
+still low enough to reach VEEA on the day that mattered.
+
+The trader differences are within noise on eight or nine trades, and should not
+be read as evidence either way.
 
 ### Costs
 

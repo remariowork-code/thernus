@@ -43,7 +43,15 @@ const TOP = flag('top', 25);
  * unusable — the move has to be visible in money as well as percent.
  */
 const MIN_PRICE = flag('min-price', 0.5);
-const MIN_VOLUME = flag('min-volume', 50_000);
+/**
+ * A floor on IEX volume is a floor on roughly thirty times as many real
+ * shares, so this is deliberately low. At 50,000 it missed GIPR the day
+ * before it opened up 173%: GIPR traded 22,510 shares on the session it rose
+ * 23% on six to twelve times its normal volume, which was the only advance
+ * warning there was. The volume ratio column is what separates signal from
+ * noise here; this only exists to drop names moving on a few prints.
+ */
+const MIN_VOLUME = flag('min-volume', 10_000);
 
 /**
  * Premarket floors are different in kind, not just degree.

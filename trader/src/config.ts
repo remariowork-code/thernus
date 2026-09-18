@@ -15,7 +15,22 @@ export interface EntryRules {
   minPrice: number;
   /** Maximum share price. At $100 of capital, a $2,000 share is untradeable. */
   maxPrice: number;
-  /** Minimum shares traded today, as a liquidity floor. */
+  /**
+   * Minimum shares traded today so far.
+   *
+   * Two things make this smaller than instinct suggests. The feed is IEX,
+   * which is a few percent of the consolidated tape, so a floor here is
+   * really demanding thirty to fifty times as many real shares. And at $100
+   * of capital a position is one to twenty shares, so liquidity is never the
+   * binding constraint — the floor exists only to stop a handful of prints
+   * manufacturing a percentage.
+   *
+   * Setting it by instinct cost three detections. A 200,000 floor made VEEA
+   * unreachable on the day it traded a hundred times its normal volume, and
+   * the whole session only came to 54,439 shares on IEX. RVOL is the test
+   * that actually distinguishes unusual from ordinary, and it is
+   * sample-invariant because its baseline comes from the same feed.
+   */
   minDayVolume: number;
 
   /** Required move from the previous close, percent. */
@@ -264,7 +279,7 @@ export const PROFILES: Record<ProfileName, DeepPartial<TraderConfig>> = {
     entry: {
       minPrice: 5,
       maxPrice: 100,
-      minDayVolume: 500_000,
+      minDayVolume: 100_000,
       minChangePercent: 3,
       minRvol: 2,
       minMomentumScore: 60,
@@ -305,12 +320,14 @@ export const PROFILES: Record<ProfileName, DeepPartial<TraderConfig>> = {
     entry: {
       minPrice: 0.5,
       maxPrice: 10,
-      // Cumulative volume so far today, NOT the day's eventual total. A floor
-      // near the whole session's volume means a stock only qualifies in the
-      // last hour: RETO trades 1.2M all day, so a 1M floor delayed entry from
-      // 11:24 to 15:00 and missed the move entirely. RVOL carries the real
-      // "is this unusual" test, and it is time-of-day normalised.
-      minDayVolume: 200_000,
+      // Cumulative volume so far today, NOT the day's eventual total, and
+      // measured on a feed that sees a few percent of the tape. A floor near
+      // the whole session's volume means a stock only qualifies in the last
+      // hour — RETO trades 1.2M all day, so a 1M floor pushed entry from
+      // 11:24 to mid-afternoon — and 200,000 put VEEA out of reach entirely
+      // on a day it traded a hundred times normal. RVOL carries the real
+      // test and is time-of-day normalised.
+      minDayVolume: 20_000,
       minChangePercent: 15,
       minRvol: 5,
       minMomentumScore: 65,
