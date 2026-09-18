@@ -103,6 +103,20 @@ function sessionMode(d = Date.now()) {
   return 'regular';
 }
 
+/**
+ * IEX runs its own pre-market session from 08:00, not from 04:00.
+ *
+ * Before then this feed carries nothing at all — not thin data, none: at 07:13
+ * even SPY and AAPL still show yesterday's 15:59 print as their latest trade.
+ * An empty screen at that hour means the exchange is shut, not that the market
+ * is quiet, and the two are worth telling apart out loud.
+ */
+const IEX_PREMARKET_OPEN = 8 * 60;
+
+function beforeIexPremarket(d = Date.now()) {
+  return sessionMode(d) === 'premarket' && nyMinutes(d) < IEX_PREMARKET_OPEN;
+}
+
 async function tradableSymbols() {
   const res = await fetch('https://paper-api.alpaca.markets/v2/assets?status=active&asset_class=us_equity', { headers: H });
   if (!res.ok) throw new Error(`assets: ${res.status} ${res.statusText}`);
@@ -297,6 +311,11 @@ for (;;) {
     if (mode === 'premarket') {
       console.log(`\npremarket mode: up ${PM_MIN_PCT}%+ vs yesterday's close, ` +
         `at least ${PM_MIN_VOLUME.toLocaleString()} shares traded on IEX`);
+      if (beforeIexPremarket()) {
+        console.log(`  note: it is ${ny().slice(0, 5)} ET and IEX does not open its pre-market`);
+        console.log('  session until 08:00, so this feed has no trades yet today. An empty list');
+        console.log('  now means the exchange is shut, not that nothing is moving.');
+      }
     } else {
       console.log('\nregular-hours mode');
     }
