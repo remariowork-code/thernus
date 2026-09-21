@@ -23,6 +23,7 @@
  *   npm run discover -- --min-price 1 --min-volume 100000
  *   npm run discover -- --pm-min-pct 10           premarket move floor
  *   npm run discover -- --premarket               force premarket arithmetic
+ *   npm run discover -- --watch --symbols GLND,GRML,CRML   track a named list
  */
 import { readFileSync } from 'node:fs';
 
@@ -34,6 +35,19 @@ const flag = (name, fallback) => {
 const WATCH = args.includes('--watch');
 /** Force premarket arithmetic regardless of the clock. */
 const FORCE_PREMARKET = args.includes('--premarket');
+/**
+ * Watch a named list instead of the whole market.
+ *
+ * With a list the floors are dropped: you asked for these symbols, so a
+ * filter silently removing one is worse than useless — it looks like the
+ * stock stopped moving. Everything named is shown, ranked, every scan.
+ */
+const ONLY = (() => {
+  const i = args.indexOf('--symbols');
+  return i >= 0 && args[i + 1]
+    ? args[i + 1].split(',').map((x) => x.trim().toUpperCase()).filter(Boolean)
+    : null;
+})();
 const INTERVAL_MIN = flag('interval', 3);
 const TOP = flag('top', 25);
 
@@ -155,11 +169,14 @@ async function scan(symbols) {
       const today = dailyIsToday ? (d?.dailyBar?.v ?? 0) : 0;
       const prevVol = (dailyIsToday ? d?.prevDailyBar?.v : d?.dailyBar?.v) ?? 0;
 
-      if (!price || !prev || price < MIN_PRICE || today < MIN_VOLUME) continue;
+      if (!price || !prev) continue;
+      if (!ONLY && (price < MIN_PRICE || today < MIN_VOLUME)) continue;
 
-      // A stale print is last session's close, not today's move.
+      // A stale print is last session's close, not today's move. A watched
+      // symbol is shown anyway, with its timestamp, so a name that has simply
+      // stopped trading is visible as exactly that.
       const ageMin = (Date.now() - Date.parse(d.latestTrade.t)) / 60000;
-      if (ageMin > 30) continue;
+      if (!ONLY && ageMin > 30) continue;
 
       // Today's volume so far against yesterday's whole day. Crude, but it
       // needs no extra request, and mid-morning anything above 1 means the
@@ -211,10 +228,11 @@ async function scanPremarket(symbols) {
       const dailyIsToday = d?.dailyBar?.t?.slice(0, 10) === todayNY;
       const prev = dailyIsToday ? d?.prevDailyBar?.c : d?.dailyBar?.c;
       const prevVol = (dailyIsToday ? d?.prevDailyBar?.v : d?.dailyBar?.v) ?? 0;
-      if (!prev || prev <= 0 || price < MIN_PRICE) continue;
+      if (!prev || prev <= 0) continue;
+      if (!ONLY && price < MIN_PRICE) continue;
 
       const pct = ((price - prev) / prev) * 100;
-      if (pct < PM_MIN_PCT) continue;
+      if (!ONLY && pct < PM_MIN_PCT) continue;
 
       candidates.push({ sym, price, prev, prevVol, pct, at: stamp });
     }
@@ -253,7 +271,7 @@ async function scanPremarket(symbols) {
         volRatio: r.prevVol > 0 ? vol / r.prevVol : 0,
       };
     })
-    .filter((r) => r.vol >= PM_MIN_VOLUME);
+    .filter((r) => ONLY || r.vol >= PM_MIN_VOLUME);
 }
 
 /**
@@ -268,7 +286,7 @@ function render(rows, previousTop, mode) {
   // Premarket ranks on the move alone. The volume figure there is a sample of
   // a sample — a few hours of IEX prints — and weighting by it would mostly
   // rank by which names happen to route to IEX.
-  const ranked = rows.filter((r) => r.pct > 0)
+  const ranked = rows.filter((r) => ONLY || r.pct > 0)
     .sort((a, b) => (premarket ? b.pct - a.pct : score(b) - score(a)))
     .slice(0, TOP);
 
@@ -289,8 +307,8 @@ function render(rows, previousTop, mode) {
     const head = `  ${String(i + 1).padStart(2)}. ${r.sym.padEnd(7)} ${r.price.toFixed(2).padStart(8)}`;
     const tail = `${(r.volRatio.toFixed(2) + 'x').padStart(8)}      ${r.vol.toLocaleString().padStart(11)}`;
     console.log(premarket
-      ? `${head}  ${('$' + r.prev.toFixed(2)).padStart(10)}  ${('+' + r.pct.toFixed(1) + '%').padStart(8)}   ${tail}   ${ny(Date.parse(r.at)).slice(0, 5)}${isNew ? '  << NEW' : ''}`
-      : `${head}  ${('+$' + r.d.toFixed(2)).padStart(9)}  ${('+' + r.pct.toFixed(1) + '%').padStart(7)}   ${tail}${isNew ? '   << NEW' : ''}`);
+      ? `${head}  ${('$' + r.prev.toFixed(2)).padStart(10)}  ${((r.pct >= 0 ? '+' : '') + r.pct.toFixed(1) + '%').padStart(8)}   ${tail}   ${ny(Date.parse(r.at)).slice(0, 5)}${isNew ? '  << NEW' : ''}`
+      : `${head}  ${((r.d >= 0 ? '+$' : '-$') + Math.abs(r.d).toFixed(2)).padStart(9)}  ${((r.pct >= 0 ? '+' : '') + r.pct.toFixed(1) + '%').padStart(7)}   ${tail}${isNew ? '   << NEW' : ''}`);
   }
   if (premarket && ranked.length > 0) {
     console.log('  IEX is a few percent of the tape: premarket volumes rank, they do not size.');
@@ -298,9 +316,14 @@ function render(rows, previousTop, mode) {
   return new Set(ranked.map((r) => r.sym));
 }
 
-const symbols = await tradableSymbols();
-console.log(`scanning ${symbols.length} tradable US equities`);
-console.log(`floors: price >= $${MIN_PRICE}, today volume >= ${MIN_VOLUME.toLocaleString()}`);
+const symbols = ONLY ?? await tradableSymbols();
+if (ONLY) {
+  console.log(`watching ${symbols.length} named symbols: ${symbols.join(', ')}`);
+  console.log('floors are off for a named list — everything asked for is shown');
+} else {
+  console.log(`scanning ${symbols.length} tradable US equities`);
+  console.log(`floors: price >= $${MIN_PRICE}, today volume >= ${MIN_VOLUME.toLocaleString()}`);
+}
 if (WATCH) {
   console.log(`watching: rescan every ${INTERVAL_MIN} minute${INTERVAL_MIN === 1 ? '' : 's'}` +
     ' (change with --interval N)');
