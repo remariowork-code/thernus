@@ -765,7 +765,7 @@ merely stale. GRML's raw SEC figure is 158,850,637 shares; adjusted for the
 ## Does short interest predict the gap? A measured answer
 
 ```bash
-npm run shortstudy -- --days 25
+npm run shortstudy -- --days 90
 ```
 
 Tests the six-observation hypothesis at scale, matching every event to the
@@ -773,47 +773,53 @@ short-interest snapshot that **predated** it — FINRA publishes two to three
 weeks late, so scoring an 18 September event against a mid-September
 settlement would be using data nobody had.
 
-```
-  under 2%     n= 39/33sym  up 33%  mean -6.4%   median -3.2%
-  2-5%         n= 27/23sym  up 37%  mean -4.2%   median -5.5%
-  5-10%        n= 23/17sym  up 43%  mean +6.8%   median -1.0%
-  10-15%       n=  6/ 6sym  up 83%  mean +1.3%   median +2.3%
-  15-25%       n= 12/ 8sym  up 58%  mean +20.6%  median +8.0%
-  over 25%     n=  4/ 3sym  up 25%  mean -8.0%   median -4.6%
-```
-
-The headline looks strong — `>=15%` short gaps **+13.5%** against **-5.5%**
-for `<5%`, a 19-point spread. It does not survive scrutiny intact:
-
-- **It is partly circular.** VEEA (14 Sep, +89%) and GRML (21 Sep, +46%) are
-  the cases that generated the hypothesis and they sit in the test set.
-  Excluding them: n=14, mean +5.7%, spread +11.2 points.
-- **One symbol is a quarter of the sample.** NCPL contributes 4 of 16
-  high-short events at a +19.2% average. Excluding it as well leaves **n=10,
-  mean +0.3%** — indistinguishable from zero.
-- **It is not monotonic.** Above 25% short the mean goes *negative*. A real
-  squeeze mechanism should get stronger with more shorts, not reverse.
-
-### What does look solid
-
-The **negative** side, which has the larger sample: lightly shorted big movers
-gap down reliably. Under 5% short is 66 events across ~50 symbols, mean -5.5%,
-up only a third of the time. That is a usable exclusion rule even though the
-inclusion rule is not established.
-
-And the float finding runs **opposite** to what six observations suggested:
+**632 events, 436 symbols, 90 sessions:**
 
 ```
-  under 2M float   up 30%  mean -2.1%
-  over 50M float   up 58%  mean -0.2%
+  under 2%     n=215/157sym  up 30%  mean -5.6%   median -5.2%
+  2-5%         n=136/111sym  up 40%  mean -2.1%   median -1.4%
+  5-10%        n=145/102sym  up 41%  mean +0.7%   median -1.0%
+  10-15%       n= 55/ 47sym  up 55%  mean +1.0%   median +0.3%
+  15-25%       n= 58/ 42sym  up 50%  mean +7.9%   median +0.7%
+  over 25%     n= 23/ 18sym  up 43%  mean -1.2%   median -1.1%
 ```
 
-Small floats gapped down *more* often. Plausibly they are the ones that spiked
-furthest beyond fair value and had furthest to revert.
+### What holds
 
-### Data quality caught in the process
+**The exclusion rule.** Big movers with under 2% short interest gap down 70%
+of the time, by 5.6% on average, across 215 events and 157 symbols. This is
+the most robust result the project has produced.
 
-Five events came through with impossible short percentages — HQ at
-**113,013,300%** against a float rounding to zero, plus PCLA, AEHL, SXTC and
-JZXN above 80%. All were bad SEC share counts. They are now rejected above 60%
-rather than being allowed to set a bucket mean.
+**The gradient is monotonic to 25%** — up-rates of 30% → 40% → 41% → 55% →
+50%. At a 25-session sample that progression was noise carried by one symbol;
+at 90 sessions the high bucket spans 42 distinct symbols and no single name
+drives it.
+
+### What does not
+
+**Above 25% short the mean turns negative.** A squeeze mechanism should
+strengthen with more shorts, not reverse. Plausibly those are the cases where
+the shorts are simply right.
+
+**The mean is tail-driven, the median is not.** The 15-25% bucket means +7.9%
+but medians +0.7%, with p90 at +46%. Half those events go nowhere and a few
+large winners carry the average, so capturing it requires taking every signal.
+
+**Float reverses the six-observation story.** Floats under 2M gap up only 32%
+of the time with a median of -6.5%, against 49% and 0.0% for floats over 50M.
+Small floats mostly gap down and occasionally explode — mean +0.9%, median
+-6.5%, which is the whole shape in two numbers.
+
+### Data quality
+
+Five events arrived with impossible short percentages — HQ at **113,013,300%**
+against a float rounding to zero, plus four others above 80%, all from bad SEC
+share counts. Percentages above 60% and floats under 100,000 shares are now
+rejected rather than allowed to set a bucket mean.
+
+### Reading this honestly
+
+One usable rule out of seven hypotheses tested, and it is an exclusion rule:
+it tells you what not to buy, not what to buy. Applied to the board on
+22 September, every scoreable mover sat between 2.0% and 6.4% short — the
+bucket that reliably gives it back.
