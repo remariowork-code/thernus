@@ -707,3 +707,57 @@ earlier figure is best read as small-sample noise rather than an edge.
 The tool is kept because measuring a hypothesis properly is worth the same
 whether the answer is yes or no, and because 235 observations of overnight gap
 behaviour is the most useful data this repo has produced.
+
+## Float and short interest
+
+```bash
+npm run squeeze                              # today, ranked
+npm run squeeze -- --symbols GRML,VEEA,JAGX
+npm run squeeze -- --min-short 15            # heavily shorted only
+```
+
+Built after checking what professional scanners filter on and finding none of
+it was in our data. Two variables doing two different jobs:
+
+**Float decides whether a stock can move.** GLND carried 27M shares against
+GRML's 2.9M, took the identical Greenland catalyst, and sat flat from the open
+while GRML ran another 38%.
+
+**Short interest decides whether it keeps moving.** The moves that held had
+22% (GRML) and 42% (VEEA) of float short; the ones that faded had 1.28%
+(LHSW) and 2.31% (DCOY). Shorts are forced buyers.
+
+Underneath both: **every one of the seven names examined did a reverse split
+in 2026**, JAGX twice — the second 15-to-1 on 17 September, five days before
+it rose 516% on an FDA fee waiver. A distressed company compressing its share
+count to keep a listing manufactures the float conditions that make a violent
+move possible.
+
+### Three free sources, reconciled
+
+| | Source | Freshness |
+|---|---|---|
+| Reverse splits | Alpaca corporate actions | current |
+| Shares outstanding | SEC XBRL company facts | last filing |
+| Short interest | FINRA consolidated SI | 2-3 weeks |
+
+The last two are **as of a date**, and these companies split constantly, so
+both must be split-adjusted or they are wrong by the split factor rather than
+merely stale. GRML's raw SEC figure is 158,850,637 shares; adjusted for the
+50-to-1 on 24 August it is 3,177,013, which reconciles exactly with Finviz.
+
+### Known limitations
+
+- **It reports shares outstanding, not float.** Insider and restricted stock is
+  not excluded, so short percentages run lower than Finviz's. For VEEA:
+  outstanding 3.11M vs float 1.59M, giving 21.6% where Finviz shows 42.2%.
+- **Some SEC filings are years old.** JAGX's most recent tagged share count is
+  from 2018, which produced a short float of 123.6% and sorted it to the top of
+  the list. Names with a filing over a year old are marked `*` and are refused
+  a percentage at all — a confidently wrong number outranking correct ones is
+  worse than a blank.
+- **Short interest is structurally 2-3 weeks stale.** FINRA publishes on that
+  lag; nothing fixes it.
+- **The short-interest hypothesis rests on six observations.** It has a
+  mechanism and it is what the industry uses, which is more than the four
+  hypotheses before it had, but it has not been measured at scale yet.

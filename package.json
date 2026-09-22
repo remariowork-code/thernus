@@ -31,7 +31,8 @@
     "trader:penny": "tsx trader/src/index.ts sim --profile penny",
     "trader:explain": "tsx trader/src/explain.ts",
     "overnight": "node scripts/overnight.mjs",
-    "dormant": "node scripts/dormant.mjs"
+    "dormant": "node scripts/dormant.mjs",
+    "squeeze": "node scripts/squeeze.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
