@@ -879,3 +879,61 @@ news events, which pushes the measured difference toward zero.
 So the honest reading is: *Chan's effect cannot be detected with this news
 source on this universe*, not *Chan is wrong*. Testing it properly needs a
 feed that carries GlobeNewswire, PR Newswire and ACCESSWIRE primary releases.
+
+## Insider cluster buying — a change of horizon, tested
+
+```bash
+npm run insider -- --quarters 2025q1,2025q2
+npm run insider -- --quarters 2025q1,2025q2 --backtest
+npm run insider -- --quarters 2026q1 --min-insiders 3
+```
+
+A deliberate move out of the box every other strategy here sits in. Intraday
+micro-cap momentum is where Barber et al. find 80% of day traders losing and
+where costs consume 63-100% of documented anomaly profits — at a 15-25%
+round-trip spread nothing survives. Insider buying pushes the horizon to
+months, where a 2% cost is noise rather than the entire edge.
+
+The literature is unusually consistent: Lakonishok & Lee (2002, RFS) find
+heavy insider buying beats the market by ~4.8% over 12 months; cluster buys
+roughly double single-insider returns; small-cap officer clusters are reported
+at ~7.4% abnormal over 12 months.
+
+Data is SEC's quarterly Form 345 bulk datasets — one download per quarter
+rather than 54,000 filings, free. Only `TRANS_CODE = P` counts: open-market
+purchases with the insider's own money. Grants, option exercises and tax
+withholding are not decisions to buy.
+
+**816 clusters from 2025 H1, 766 with price data:**
+
+```
+RAW RETURN
+  12 months   n=693  up 59%  mean +25.0% ±4.4  t= 5.7  median +10.2%
+
+ABNORMAL vs IWM
+  12 months   n=693  up 32%  mean  -7.1% ±4.4  t=-1.6  median -21.7%
+```
+
+**The raw return is real and the abnormal return is not.** +25% over twelve
+months at t=5.7 is money, but IWM returned 15.1% over the same window and only
+**32% of these stocks beat it**. The median lagged by 21.7%. The positive mean
+at three months carries a standard error of ±11.1 — it is a few large winners,
+not a typical outcome.
+
+Two-insider clusters actively underperform: **-12.2%, t=-3.5**, which is
+significant in the wrong direction. Cluster size shows no monotonic pattern.
+
+### Why this may still understate the case against
+
+- **Survivorship.** Only symbols Alpaca carries today are included, so
+  companies that delisted are missing. That biases the measured return *up*;
+  the true figure is likely worse.
+- **One regime.** Eighteen months, in a period when small caps trailed large.
+- **Crude benchmark.** The literature uses characteristic-matched portfolios
+  adjusting size, value and momentum. IWM handles size only.
+
+### The usable conclusion
+
+Insider cluster buying made money over this window and made *less* money than
+buying the index. That is the eighth hypothesis tested here and the seventh
+that does not survive contact with a benchmark.

@@ -34,7 +34,8 @@
     "dormant": "node scripts/dormant.mjs",
     "squeeze": "node scripts/squeeze.mjs",
     "shortstudy": "node scripts/shortstudy.mjs",
-    "newsdrift": "node scripts/newsdrift.mjs"
+    "newsdrift": "node scripts/newsdrift.mjs",
+    "insider": "node scripts/insider.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
