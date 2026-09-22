@@ -761,3 +761,59 @@ merely stale. GRML's raw SEC figure is 158,850,637 shares; adjusted for the
 - **The short-interest hypothesis rests on six observations.** It has a
   mechanism and it is what the industry uses, which is more than the four
   hypotheses before it had, but it has not been measured at scale yet.
+
+## Does short interest predict the gap? A measured answer
+
+```bash
+npm run shortstudy -- --days 25
+```
+
+Tests the six-observation hypothesis at scale, matching every event to the
+short-interest snapshot that **predated** it — FINRA publishes two to three
+weeks late, so scoring an 18 September event against a mid-September
+settlement would be using data nobody had.
+
+```
+  under 2%     n= 39/33sym  up 33%  mean -6.4%   median -3.2%
+  2-5%         n= 27/23sym  up 37%  mean -4.2%   median -5.5%
+  5-10%        n= 23/17sym  up 43%  mean +6.8%   median -1.0%
+  10-15%       n=  6/ 6sym  up 83%  mean +1.3%   median +2.3%
+  15-25%       n= 12/ 8sym  up 58%  mean +20.6%  median +8.0%
+  over 25%     n=  4/ 3sym  up 25%  mean -8.0%   median -4.6%
+```
+
+The headline looks strong — `>=15%` short gaps **+13.5%** against **-5.5%**
+for `<5%`, a 19-point spread. It does not survive scrutiny intact:
+
+- **It is partly circular.** VEEA (14 Sep, +89%) and GRML (21 Sep, +46%) are
+  the cases that generated the hypothesis and they sit in the test set.
+  Excluding them: n=14, mean +5.7%, spread +11.2 points.
+- **One symbol is a quarter of the sample.** NCPL contributes 4 of 16
+  high-short events at a +19.2% average. Excluding it as well leaves **n=10,
+  mean +0.3%** — indistinguishable from zero.
+- **It is not monotonic.** Above 25% short the mean goes *negative*. A real
+  squeeze mechanism should get stronger with more shorts, not reverse.
+
+### What does look solid
+
+The **negative** side, which has the larger sample: lightly shorted big movers
+gap down reliably. Under 5% short is 66 events across ~50 symbols, mean -5.5%,
+up only a third of the time. That is a usable exclusion rule even though the
+inclusion rule is not established.
+
+And the float finding runs **opposite** to what six observations suggested:
+
+```
+  under 2M float   up 30%  mean -2.1%
+  over 50M float   up 58%  mean -0.2%
+```
+
+Small floats gapped down *more* often. Plausibly they are the ones that spiked
+furthest beyond fair value and had furthest to revert.
+
+### Data quality caught in the process
+
+Five events came through with impossible short percentages — HQ at
+**113,013,300%** against a float rounding to zero, plus PCLA, AEHL, SXTC and
+JZXN above 80%. All were bad SEC share counts. They are now rejected above 60%
+rather than being allowed to set a bucket mean.

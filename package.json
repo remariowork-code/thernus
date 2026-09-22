@@ -32,7 +32,8 @@
     "trader:explain": "tsx trader/src/explain.ts",
     "overnight": "node scripts/overnight.mjs",
     "dormant": "node scripts/dormant.mjs",
-    "squeeze": "node scripts/squeeze.mjs"
+    "squeeze": "node scripts/squeeze.mjs",
+    "shortstudy": "node scripts/shortstudy.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
