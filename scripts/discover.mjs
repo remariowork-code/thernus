@@ -220,7 +220,13 @@ async function scanPremarket(symbols) {
       // The print must be from today. Otherwise it is simply yesterday's close
       // quoted back, which would show every dormant symbol as unchanged and,
       // worse, price a stale name against the wrong reference.
-      if (nyDate(Date.parse(stamp)) !== todayNY) continue;
+      //
+      // A watched symbol is kept and labelled instead of dropped. "It has not
+      // traded yet" and "it is not moving" are different facts, and collapsing
+      // them into an empty screen is the failure this whole premarket mode
+      // exists to stop.
+      const stale = nyDate(Date.parse(stamp)) !== todayNY;
+      if (!ONLY && stale) continue;
 
       // dailyBar is yesterday before the open, which makes it the reference
       // close. On the rare occasion a bar for today already exists, fall back
@@ -234,11 +240,13 @@ async function scanPremarket(symbols) {
       const pct = ((price - prev) / prev) * 100;
       if (!ONLY && pct < PM_MIN_PCT) continue;
 
-      candidates.push({ sym, price, prev, prevVol, pct, at: stamp });
+      candidates.push({ sym, price, prev, prevVol, pct, at: stamp, stale });
     }
   }
 
-  const shortlist = candidates.sort((a, b) => b.pct - a.pct).slice(0, PM_SHORTLIST);
+  const shortlist = candidates
+    .sort((a, b) => Number(a.stale) - Number(b.stale) || b.pct - a.pct)
+    .slice(0, PM_SHORTLIST);
   if (shortlist.length === 0) return [];
 
   // Second pass: today's minute bars carry the premarket volume.
@@ -307,7 +315,9 @@ function render(rows, previousTop, mode) {
     const head = `  ${String(i + 1).padStart(2)}. ${r.sym.padEnd(7)} ${r.price.toFixed(2).padStart(8)}`;
     const tail = `${(r.volRatio.toFixed(2) + 'x').padStart(8)}      ${r.vol.toLocaleString().padStart(11)}`;
     console.log(premarket
-      ? `${head}  ${('$' + r.prev.toFixed(2)).padStart(10)}  ${((r.pct >= 0 ? '+' : '') + r.pct.toFixed(1) + '%').padStart(8)}   ${tail}   ${ny(Date.parse(r.at)).slice(0, 5)}${isNew ? '  << NEW' : ''}`
+      ? (r.stale
+        ? `${head}  ${('$' + r.prev.toFixed(2)).padStart(10)}       —           no trade today (last ${ny(Date.parse(r.at)).slice(0, 5)} on ${r.at.slice(0, 10)})`
+        : `${head}  ${('$' + r.prev.toFixed(2)).padStart(10)}  ${((r.pct >= 0 ? '+' : '') + r.pct.toFixed(1) + '%').padStart(8)}   ${tail}   ${ny(Date.parse(r.at)).slice(0, 5)}${isNew ? '  << NEW' : ''}`)
       : `${head}  ${((r.d >= 0 ? '+$' : '-$') + Math.abs(r.d).toFixed(2)).padStart(9)}  ${((r.pct >= 0 ? '+' : '') + r.pct.toFixed(1) + '%').padStart(7)}   ${tail}${isNew ? '   << NEW' : ''}`);
   }
   if (premarket && ranked.length > 0) {
