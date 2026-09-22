@@ -35,7 +35,8 @@
     "squeeze": "node scripts/squeeze.mjs",
     "shortstudy": "node scripts/shortstudy.mjs",
     "newsdrift": "node scripts/newsdrift.mjs",
-    "insider": "node scripts/insider.mjs"
+    "insider": "node scripts/insider.mjs",
+    "trader:alpaca": "tsx trader/src/index.ts alpaca"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

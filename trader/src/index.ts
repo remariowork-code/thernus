@@ -14,25 +14,33 @@
  */
 import { existsSync } from 'node:fs';
 import { AlpacaScanner } from './data/AlpacaScanner';
+import { AlpacaBroker } from './broker/AlpacaBroker';
 import { IbkrBroker } from './broker/IbkrBroker';
 import { PaperBroker } from './broker/PaperBroker';
 import type { IBroker } from './broker/IBroker';
 import { TradeLog } from './audit/TradeLog';
-import { describeConfig, getTraderConfig, isProfileName, type ProfileName } from './config';
+import {
+  describeConfig, estimateCommission, getTraderConfig, isProfileName, type ProfileName,
+} from './config';
 import { RiskManager } from './engine/RiskManager';
 import { TradingEngine } from './engine/TradingEngine';
 import { createNotifier } from './notify/Notifier';
 import { getCurrentSession } from '../../shared/market/session';
 
-type Mode = 'sim' | 'paper' | 'live';
+type Mode = 'sim' | 'paper' | 'live' | 'alpaca' | 'alpaca-live';
 
 const KILL_SWITCH_FILE = process.env.TRADER_KILL_FILE ?? 'trader/STOP';
 const LOG_DIR = process.env.TRADER_LOG_DIR ?? 'trader/logs';
 
 function parseMode(raw: string | undefined): Mode {
-  if (raw === 'paper' || raw === 'live') return raw;
+  if (raw === 'paper' || raw === 'live' || raw === 'alpaca' || raw === 'alpaca-live') return raw;
   if (raw === undefined || raw === 'sim') return 'sim';
-  throw new Error(`unknown mode "${raw}". Use sim, paper, or live.`);
+  throw new Error(`unknown mode "${raw}". Use sim, paper, live, alpaca, or alpaca-live.`);
+}
+
+/** Any mode that can move real money. */
+function isLiveMode(mode: Mode): boolean {
+  return mode === 'live' || mode === 'alpaca-live';
 }
 
 /** First of `names` that is set. The worker's names come first. */
@@ -59,7 +67,7 @@ async function main(): Promise<void> {
   const mode = parseMode(process.argv[2] ?? process.env.TRADER_MODE);
   const config = getTraderConfig(parseProfile());
 
-  if (mode === 'live' && !config.liveTrading) {
+  if (isLiveMode(mode) && !config.liveTrading) {
     // Two independent switches, and this is the one that has to be said out
     // loud. Live mode without it exits rather than quietly running as paper,
     // because a silent downgrade is its own kind of surprise.
@@ -81,18 +89,29 @@ async function main(): Promise<void> {
     process.env.ALPACA_FEED ?? 'iex',
   );
 
-  const broker: IBroker = mode === 'sim'
-    ? new PaperBroker({
-        startingCash: config.risk.accountEquity,
-        priceFeed: (symbol) => data.getMetrics(symbol).then((m) => m?.price ?? null),
-      })
-    : new IbkrBroker({
-        host: process.env.IBKR_HOST ?? '127.0.0.1',
-        port: Number(process.env.IBKR_PORT ?? (mode === 'live' ? 7496 : 7497)),
-        clientId: Number(process.env.IBKR_CLIENT_ID ?? 1),
-        isLive: mode === 'live',
-        priceFeed: (symbol) => data.getMetrics(symbol).then((m) => m?.price ?? null),
-      });
+  let broker: IBroker;
+  if (mode === 'sim') {
+    broker = new PaperBroker({
+      startingCash: config.risk.accountEquity,
+      priceFeed: (symbol) => data.getMetrics(symbol).then((m) => m?.price ?? null),
+      commission: (quantity, price) => estimateCommission(quantity, price, config.costs),
+    });
+  } else if (mode === 'alpaca' || mode === 'alpaca-live') {
+    broker = new AlpacaBroker({
+      keyId: requireEnv('ALPACA_API_KEY_ID', 'ALPACA_KEY_ID'),
+      secretKey: requireEnv('ALPACA_API_SECRET_KEY', 'ALPACA_SECRET_KEY'),
+      isLive: mode === 'alpaca-live',
+      feed: process.env.ALPACA_FEED ?? 'iex',
+    });
+  } else {
+    broker = new IbkrBroker({
+      host: process.env.IBKR_HOST ?? '127.0.0.1',
+      port: Number(process.env.IBKR_PORT ?? (mode === 'live' ? 7496 : 7497)),
+      clientId: Number(process.env.IBKR_CLIENT_ID ?? 1),
+      isLive: mode === 'live',
+      priceFeed: (symbol) => data.getMetrics(symbol).then((m) => m?.price ?? null),
+    });
+  }
 
   console.log(`\nThernus trader — ${mode} mode, ${config.profile} profile, broker: ${broker.name}`);
   for (const line of describeConfig(config)) console.log(`  ${line}`);

@@ -112,6 +112,39 @@ still low enough to reach VEEA on the day that mattered.
 The trader differences are within noise on eight or nine trades, and should not
 be read as evidence either way.
 
+### Alpaca as broker — zero commission
+
+```bash
+npm run trader:alpaca          # paper account, no commission
+```
+
+Written because cost was the one thing this project established beyond doubt:
+commission ran **0.66R per trade** against a 2R target on the original
+settings, moving the break-even win rate from 33% to 55%. Alpaca charges
+nothing on US equities, so the mode also swaps the cost model to
+`ZERO_COMMISSION` — otherwise every simulation reports losses the account
+would never see.
+
+Measured over 15 sessions on the penny profile:
+
+```
+IBKR costs    9 trades, 0 winners, -$6.43   equity $93.57
+Alpaca (zero) 9 trades, 2 winners, -$5.21   equity $94.79
+```
+
+It saves $1.22 over nine trades and turns two marginal losers into marginal
+winners. **It does not make the strategy work.** Commission was a real cost
+and never the whole problem — the spread is the larger half, it is 15-25% on
+these names, and it is identical whoever executes the order.
+
+Two safety properties carry over. The paper and live hosts are selected from
+the mode rather than configured, so they cannot disagree; and `alpaca-live`
+needs the same two independent switches as IBKR live.
+
+A cancellation after a partial fill maps to `PARTIAL`, not `CANCELLED` —
+shares are held, and reporting otherwise would tell the engine it owns nothing
+while the account holds stock.
+
 ### Costs
 
 At $100 of capital the cost structure is a first-order term. With the original

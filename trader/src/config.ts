@@ -240,6 +240,22 @@ export const DEFAULT_TRADER_CONFIG: TraderConfig = {
   liveTrading: false,
 };
 
+/**
+ * Alpaca charges nothing on US equities. Kept as a named constant rather than
+ * three zeroes inline, because the difference between this and the IBKR
+ * schedule is the single largest measured effect in the project: commission
+ * ran 0.66R per trade on the original settings and moved the break-even win
+ * rate from 33% to 55%.
+ *
+ * It does not touch the spread, which is the larger half of the cost and is
+ * identical whoever executes the order.
+ */
+export const ZERO_COMMISSION: CostModel = {
+  commissionPerShare: 0,
+  minCommissionPerOrder: 0,
+  maxCommissionPercent: 0,
+};
+
 /** Commission for one order, under the tiered schedule. */
 export function estimateCommission(
   quantity: number, price: number, costs: CostModel,
@@ -398,6 +414,13 @@ export function getTraderConfig(profileName?: ProfileName): TraderConfig {
 
   // Live trading needs two independent switches set. One of them is an
   // environment variable that says the word out loud.
+  // Alpaca modes pay no commission, and the cost model has to say so or every
+  // simulation against them reports losses the account would never see.
+  const mode = process.argv[2] ?? process.env.TRADER_MODE;
+  if (mode === 'alpaca' || mode === 'alpaca-live' || process.env.TRADER_ZERO_COMMISSION === '1') {
+    config = { ...config, costs: ZERO_COMMISSION };
+  }
+
   const armed = process.env.TRADER_LIVE === 'I_UNDERSTAND_THIS_TRADES_REAL_MONEY';
   cached = { ...config, profile: resolved, liveTrading: config.liveTrading && armed };
   return cached;
