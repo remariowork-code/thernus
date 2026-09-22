@@ -674,3 +674,36 @@ because the offering was priced at a discount.
 Note that Alpaca's news feed carries wire coverage, not primary releases: the
 VEEA term sheet went out on GlobeNewswire and never appeared. `no news on feed`
 means the feed was empty, not that there was no catalyst.
+
+## Dormancy breakouts — a hypothesis, tested and rejected
+
+```bash
+npm run dormant                  # today's first-burst candidates
+npm run dormant -- --verify 20   # score it against what happened next
+```
+
+Screens for the opposite of every other tool here: names whose median volume
+over ten sessions was near zero, firing on the first session they wake up. It
+came from noticing that every large gap we logged had a quiet precursor day —
+VEEA ran +41% on ~100x volume with no news the day before it gapped +89%, and
+the screen does find it, ranked second at 103x its median of 531 shares/day.
+
+**It does not work.** Over 20 sessions:
+
+```
+235 first-burst candidates
+Gapped up: 74/235 (31%)
+Mean gap -2.8%, median -2.5%, worst -95.0%, best +148.5%
+```
+
+Buying every first-burst breakout and holding overnight has **negative
+expectancy**. Finding VEEA's Monday was real; it just does not generalise.
+
+The result also reframes the overnight scanner's numbers. That showed 9/19 up
+with a +8.6% mean, which looked encouraging — but this is a closely related
+setup measured over 235 observations instead of 19, and it lands at -2.8%. The
+earlier figure is best read as small-sample noise rather than an edge.
+
+The tool is kept because measuring a hypothesis properly is worth the same
+whether the answer is yes or no, and because 235 observations of overnight gap
+behaviour is the most useful data this repo has produced.
