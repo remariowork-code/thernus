@@ -823,3 +823,59 @@ One usable rule out of seven hypotheses tested, and it is an exclusion rule:
 it tells you what not to buy, not what to buy. Applied to the board on
 22 September, every scoreable mover sat between 2.0% and 6.4% short — the
 bucket that reliably gives it back.
+
+## News vs no-news: drift or reversal?
+
+```bash
+npm run newsdrift -- --days 60
+```
+
+Replicates the central test of **Chan (2003), "Stock Price Reaction to News
+and No-news: Drift and Reversal After Headlines"**, which finds that large
+moves with a headline drift onward while equally large moves without one
+reverse, both concentrated in small illiquid stocks.
+
+The motivating observation was a single session: on 22 September JAGX carried
+an FDA fee waiver and climbed all afternoon to close +1215%, while IMCC had no
+identifiable catalyst, spiked, and gave back 26% from its high in the same
+hour. Two stocks matching a published result is a reason to test it.
+
+**943 events over 60 sessions — 401 with a headline, 542 without:**
+
+```
+FIVE SESSIONS ON
+  news       n=371  up 35%  mean -5.6% ±2.1  median -7.5%
+  no news    n=461  up 38%  mean -5.1% ±1.5  median -6.9%
+                                      spread -0.6 points
+```
+
+**The effect is not there.** Worse, in the illiquid bucket where Chan predicts
+it should be strongest, news-driven moves revert *more*:
+
+```
+  news, <50k median vol      n=284  up 31%  mean -7.5%  median -11.3%
+  no news, <50k median vol   n=381  up 37%  mean -5.0%  median  -7.5%
+```
+
+The predicted direction appears only in liquid names — news +4.2% against
+no-news -10.4% — on n=11 and n=14, which is nothing.
+
+### What the study does establish
+
+**Large up-moves in this universe revert, with or without news.** Both arms
+run -5% to -6% over five sessions with only 35-38% positive. That is 943
+events and it is consistent with everything else measured here: the
+short-interest exclusion rule, the overnight gap distribution, and both
+trading profiles losing money.
+
+### Why this may be a measurement failure rather than a real null
+
+Alpaca carries wire coverage, not primary releases. **JAGX's own fee waiver
+never appeared on it, nor did VEEA's merger term sheet** — so the motivating
+example would itself be misclassified as "no news". If primary releases are
+routinely missing for micro-caps, the no-news arm is contaminated with genuine
+news events, which pushes the measured difference toward zero.
+
+So the honest reading is: *Chan's effect cannot be detected with this news
+source on this universe*, not *Chan is wrong*. Testing it properly needs a
+feed that carries GlobeNewswire, PR Newswire and ACCESSWIRE primary releases.
