@@ -9,6 +9,9 @@ export interface AlpacaBrokerOptions {
   /** Market data feed for last-price lookups. */
   feed?: string;
   requestTimeoutMs?: number;
+  /** Attempts per call, including the first. */
+  maxRetries?: number;
+  retryBaseMs?: number;
 }
 
 /** Alpaca's order lifecycle, mapped to ours. */
@@ -73,6 +76,8 @@ export class AlpacaBroker implements IBroker {
   private readonly headers: Record<string, string>;
   private readonly feed: string;
   private readonly timeoutMs: number;
+  private readonly maxRetries: number;
+  private readonly retryBaseMs: number;
   private connected = false;
   /** clientOrderId -> brokerOrderId, so cancellation does not need a lookup. */
   private readonly brokerIds = new Map<string, string>();
@@ -90,9 +95,17 @@ export class AlpacaBroker implements IBroker {
     };
     this.feed = options.feed ?? 'iex';
     this.timeoutMs = options.requestTimeoutMs ?? 15_000;
+    this.maxRetries = options.maxRetries ?? 4;
+    this.retryBaseMs = options.retryBaseMs ?? 500;
   }
 
-  private async request<T>(path: string, init: RequestInit = {}, base = this.base): Promise<T> {
+  /**
+   * One HTTP attempt. Retries are the caller's decision, because whether a
+   * retry is safe depends entirely on the verb: a lost GET costs nothing to
+   * repeat, a lost POST to /v2/orders might mean the order reached the
+   * exchange and only the reply went missing.
+   */
+  private async attempt<T>(path: string, init: RequestInit = {}, base = this.base): Promise<T> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -119,6 +132,29 @@ export class AlpacaBroker implements IBroker {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * Retry an idempotent call through transient failure.
+   *
+   * Added because a single dropped connection killed a whole session. The
+   * engine has careful failure handling — consecutive-failure counting, the
+   * kill switch — but `resume()` runs before any of it exists, so one failed
+   * /v2/positions at startup ended the process with `Fatal: fetch failed`
+   * rather than being absorbed.
+   */
+  private async request<T>(path: string, init: RequestInit = {}, base = this.base): Promise<T> {
+    let lastError: unknown;
+    for (let i = 0; i < this.maxRetries; i += 1) {
+      try {
+        return await this.attempt<T>(path, init, base);
+      } catch (error) {
+        lastError = error;
+        if (!(error instanceof BrokerError) || !error.retryable) throw error;
+        await new Promise((resolve) => setTimeout(resolve, this.retryBaseMs * 2 ** i));
+      }
+    }
+    throw lastError;
   }
 
   async connect(): Promise<void> {
@@ -224,21 +260,50 @@ export class AlpacaBroker implements IBroker {
       body.type = 'market';
     }
 
-    try {
-      const raw = await this.request<AlpacaOrder>('/v2/orders', {
-        method: 'POST', body: JSON.stringify(body),
-      });
-      this.brokerIds.set(request.clientOrderId, raw.id);
-      return this.toOrder(raw);
-    } catch (error) {
-      // Alpaca rejects a reused client_order_id with 422. Surfacing that as a
-      // duplicate rather than a generic failure lets the engine tell "already
-      // sent" apart from "never arrived", which decide opposite actions.
-      if (error instanceof BrokerError && error.code === '422' && /client_order_id/i.test(error.message)) {
-        throw new BrokerError(`duplicate order id ${request.clientOrderId}`, 'DUPLICATE');
+    // Submission retries on its own terms. A network failure here is
+    // ambiguous — the order may have reached the exchange with only the reply
+    // lost — so a blind retry risks buying twice. What makes it safe is
+    // client_order_id: resending the same id either succeeds, meaning the
+    // first attempt never landed, or comes back 422 duplicate, meaning it
+    // did. The duplicate is then a CONFIRMATION, and the order is fetched
+    // rather than reported as an error.
+    let lastError: unknown;
+    for (let i = 0; i < this.maxRetries; i += 1) {
+      try {
+        const raw = await this.attempt<AlpacaOrder>('/v2/orders', {
+          method: 'POST', body: JSON.stringify(body),
+        });
+        this.brokerIds.set(request.clientOrderId, raw.id);
+        return this.toOrder(raw);
+      } catch (error) {
+        lastError = error;
+        const dup = error instanceof BrokerError && error.code === '422'
+          && /client_order_id/i.test(error.message);
+
+        if (dup) {
+          if (i === 0) {
+            // Never sent by us — the caller reused an id, which the engine
+            // must distinguish from "never arrived" since they decide
+            // opposite actions.
+            throw new BrokerError(`duplicate order id ${request.clientOrderId}`, 'DUPLICATE');
+          }
+          // Our own earlier attempt did land after all. Recover it.
+          const existing = await this.getOrder(request.clientOrderId).catch(() => null);
+          if (existing) {
+            if (existing.brokerOrderId) this.brokerIds.set(request.clientOrderId, existing.brokerOrderId);
+            return existing;
+          }
+          throw new BrokerError(
+            `order ${request.clientOrderId} was accepted but cannot be read back`,
+            'UNREADABLE',
+          );
+        }
+
+        if (!(error instanceof BrokerError) || !error.retryable) throw error;
+        await new Promise((resolve) => setTimeout(resolve, this.retryBaseMs * 2 ** i));
       }
-      throw error;
     }
+    throw lastError;
   }
 
   async getOrder(clientOrderId: string): Promise<Order | null> {

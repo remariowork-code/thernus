@@ -12,7 +12,7 @@
  * phase that runs different code from the phase before it has not tested
  * anything the next phase relies on.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { AlpacaScanner } from './data/AlpacaScanner';
 import { AlpacaBroker } from './broker/AlpacaBroker';
 import { IbkrBroker } from './broker/IbkrBroker';
@@ -26,6 +26,33 @@ import { RiskManager } from './engine/RiskManager';
 import { TradingEngine } from './engine/TradingEngine';
 import { createNotifier } from './notify/Notifier';
 import { getCurrentSession } from '../../shared/market/session';
+
+/**
+ * Load .env.worker, as every script in scripts/ already does.
+ *
+ * The trader previously required the variables to be exported by the caller,
+ * so `npm run trader:alpaca` failed with "none of ALPACA_API_KEY_ID ... is
+ * set" while `npm run discover` worked from the same directory. Two loading
+ * conventions in one repository is a footgun regardless of which is better.
+ *
+ * Existing environment variables win: an explicitly exported value is a
+ * deliberate override of the file.
+ */
+function loadEnvFile(): void {
+  try {
+    const text = readFileSync(new URL('../../.env.worker', import.meta.url), 'utf8');
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue;
+      const i = trimmed.indexOf('=');
+      const key = trimmed.slice(0, i).trim();
+      const value = trimmed.slice(i + 1).trim().replace(/^["']|["']$/g, '');
+      if (!(key in process.env)) process.env[key] = value;
+    }
+  } catch {
+    // Absent file is fine — the environment may carry everything already.
+  }
+}
 
 type Mode = 'sim' | 'paper' | 'live' | 'alpaca' | 'alpaca-live';
 
@@ -64,6 +91,7 @@ function parseProfile(): ProfileName {
 }
 
 async function main(): Promise<void> {
+  loadEnvFile();
   const mode = parseMode(process.argv[2] ?? process.env.TRADER_MODE);
   const config = getTraderConfig(parseProfile());
 

@@ -193,3 +193,96 @@ describe('the cost model', () => {
     expect(alpaca).toBe(0);
   });
 });
+
+describe('transient failure at startup', () => {
+  async function connected(b = broker()) {
+    responder = () => ({ status: 200, body: { status: 'ACTIVE', trading_blocked: false, account_blocked: false } });
+    await b.connect();
+    calls = [];
+    return b;
+  }
+
+  it('retries a dropped connection instead of killing the session', async () => {
+    // The defect this guards: one failed /v2/positions during resume() ended
+    // the process with "Fatal: fetch failed". resume() runs before the
+    // engine's own failure handling exists, so nothing absorbed it.
+    const b = await connected();
+    let n = 0;
+    responder = () => {
+      n += 1;
+      if (n < 3) return { status: 500, body: { message: 'upstream' } };
+      return { status: 200, body: [] };
+    };
+    await expect(b.getPositions()).resolves.toEqual([]);
+    expect(n).toBe(3);
+  });
+
+  it('does not retry a rejection that will never succeed', async () => {
+    const b = await connected();
+    let n = 0;
+    responder = () => { n += 1; return { status: 403, body: { message: 'forbidden' } }; };
+    await expect(b.getPositions()).rejects.toThrow('403');
+    expect(n).toBe(1);
+  });
+
+  it('gives up after the attempt budget', async () => {
+    const b = await connected(new AlpacaBroker({ keyId: 'k', secretKey: 's', isLive: false, maxRetries: 3, retryBaseMs: 1 }));
+    let n = 0;
+    responder = () => { n += 1; return { status: 503, body: {} }; };
+    await expect(b.getPositions()).rejects.toThrow('503');
+    expect(n).toBe(3);
+  });
+});
+
+describe('retrying an order submission', () => {
+  async function connected() {
+    responder = () => ({ status: 200, body: { status: 'ACTIVE', trading_blocked: false, account_blocked: false } });
+    const b = new AlpacaBroker({ keyId: 'k', secretKey: 's', isLive: false, maxRetries: 4, retryBaseMs: 1 });
+    await b.connect();
+    calls = [];
+    return b;
+  }
+
+  it('treats a duplicate on a RETRY as confirmation the order landed', async () => {
+    // The dangerous case. A network failure on POST is ambiguous: the order
+    // may have reached the exchange with only the reply lost. Resending the
+    // same client_order_id either succeeds or returns 422 duplicate — and the
+    // duplicate proves the first attempt worked, so the order is fetched
+    // rather than reported as a failure.
+    const b = await connected();
+    let n = 0;
+    responder = (url) => {
+      if (url.includes('by_client_order_id')) {
+        return { status: 200, body: { ...ORDER, status: 'filled', filled_qty: '10', filled_avg_price: '10.5' } };
+      }
+      n += 1;
+      if (n === 1) return { status: 500, body: { message: 'gateway' } };
+      return { status: 422, body: { message: 'client_order_id must be unique' } };
+    };
+
+    const order = await b.placeOrder({ symbol: 'AAA', side: 'BUY', quantity: 10, clientOrderId: 'e-AAA-1' });
+    expect(order.status).toBe('FILLED');
+    expect(order.filledQuantity).toBe(10);
+  });
+
+  it('still reports a caller-reused id as a duplicate on the FIRST attempt', async () => {
+    // Same broker response, opposite meaning: nothing of ours was in flight,
+    // so this is the caller reusing an id and must not be swallowed.
+    const b = await connected();
+    responder = () => ({ status: 422, body: { message: 'client_order_id must be unique' } });
+    await expect(
+      b.placeOrder({ symbol: 'AAA', side: 'BUY', quantity: 1, clientOrderId: 'dup' }),
+    ).rejects.toThrow('duplicate order id');
+  });
+
+  it('does not submit twice when the first attempt succeeds', async () => {
+    const b = await connected();
+    let posts = 0;
+    responder = (url) => {
+      if (url.endsWith('/v2/orders')) posts += 1;
+      return { status: 200, body: ORDER };
+    };
+    await b.placeOrder({ symbol: 'AAA', side: 'BUY', quantity: 10, clientOrderId: 'e-1' });
+    expect(posts).toBe(1);
+  });
+});
