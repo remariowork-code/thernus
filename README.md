@@ -641,6 +641,32 @@ per transition, and that re-injecting an identical tape emits nothing further.
   so a mid-session gap understates RVOL until the next session. Restarting
   re-reads the provider snapshot and recovers what that exposes.
 
+## Universe presets
+
+```bash
+npm run discover                              # micro (default)
+npm run discover -- --universe large          # $50+, 100k+ volume
+npm run discover -- --universe mega           # $100+, 250k+ volume
+npm run discover -- --universe large --losers
+```
+
+The default ranking is `|move| x volume-ratio`, which is structurally blind to
+large caps: a $1,188 stock up 2.6% cannot outrank a $0.87 stock up 120%. LLY
+was up $30.66 and never appeared on a screen nominally showing "today's
+gainers" — the ranking working as designed and the output misleading anyway,
+which is the same failure as the empty premarket screen.
+
+Ranking changes with the preset. Volume ratio is the right weight when hunting
+unusual activity in dormant names; among large caps every day is liquid, so
+ranking on it mostly surfaces whoever had an index event. `large` and `mega`
+rank on the size of the move instead.
+
+Explicit `--min-price` / `--min-volume` still override the preset.
+
+The two universes rarely overlap. At the same moment: micro showed SXTC +226%
+and SBFM +142%; large showed PENG +13.2% and MU +3.9%. Only one of them has
+spreads you can trade through.
+
 ## Overnight gap scanner
 
 ```bash

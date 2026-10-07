@@ -24,6 +24,9 @@
  *   npm run discover -- --pm-min-pct 10           premarket move floor
  *   npm run discover -- --premarket               force premarket arithmetic
  *   npm run discover -- --watch --symbols GLND,GRML,CRML   track a named list
+ *   npm run discover -- --losers                  biggest decliners instead
+ *   npm run discover -- --universe large          $50+, liquid enough to trade
+ *   npm run discover -- --universe mega           megacap only
  */
 import { readFileSync } from 'node:fs';
 
@@ -35,6 +38,51 @@ const flag = (name, fallback) => {
 const WATCH = args.includes('--watch');
 /** Force premarket arithmetic regardless of the clock. */
 const FORCE_PREMARKET = args.includes('--premarket');
+/**
+ * Rank decliners instead of gainers.
+ *
+ * The scan has only ever shown things going up, which quietly encodes a
+ * long-only assumption the evidence does not support: across 632 events the
+ * reliable finding here is that large moves REVERT, and the 90-session study
+ * put big movers under 2% short interest down 70% of the time. What is falling
+ * is at least as informative as what is rising, and the screen should be able
+ * to say so.
+ */
+const LOSERS = args.includes('--losers');
+
+/**
+ * Universe presets.
+ *
+ * The default ranking is |move| x volume-ratio, which is structurally blind to
+ * large caps: a $1,188 stock up 2.6% cannot outrank a $0.87 stock up 120%, so
+ * LLY never appeared on a screen that was nominally showing "today's gainers".
+ * That is the ranking working as designed and the output being misleading
+ * anyway, which is the same failure as the empty premarket screen.
+ *
+ *   micro    the original behaviour, anything from 50 cents up
+ *   large    names big and liquid enough to trade at size
+ *   mega     megacap only, where a 2% move is a real event
+ *
+ * Ranking also changes with the preset. Volume ratio is the right weight when
+ * hunting unusual activity in dormant names; among large caps every day is
+ * liquid, so ranking on it just surfaces whoever had an index event. Those
+ * presets rank on the move itself.
+ */
+const PRESETS = {
+  micro: { minPrice: 0.5, minVolume: 10_000, rankByMove: false },
+  large: { minPrice: 50, minVolume: 100_000, rankByMove: true },
+  mega: { minPrice: 100, minVolume: 250_000, rankByMove: true },
+};
+const PRESET_NAME = (() => {
+  const i = args.indexOf('--universe');
+  const name = i >= 0 && args[i + 1] ? args[i + 1] : 'micro';
+  if (!(name in PRESETS)) {
+    console.error(`unknown universe "${name}". Use ${Object.keys(PRESETS).join(', ')}.`);
+    process.exit(1);
+  }
+  return name;
+})();
+const PRESET = PRESETS[PRESET_NAME];
 /**
  * Watch a named list instead of the whole market.
  *
@@ -56,7 +104,7 @@ const TOP = flag('top', 25);
  * enormous percentages from a single print, and a list dominated by those is
  * unusable — the move has to be visible in money as well as percent.
  */
-const MIN_PRICE = flag('min-price', 0.5);
+const MIN_PRICE = flag('min-price', PRESET.minPrice);
 /**
  * A floor on IEX volume is a floor on roughly thirty times as many real
  * shares, so this is deliberately low. At 50,000 it missed GIPR the day
@@ -65,7 +113,7 @@ const MIN_PRICE = flag('min-price', 0.5);
  * warning there was. The volume ratio column is what separates signal from
  * noise here; this only exists to drop names moving on a few prints.
  */
-const MIN_VOLUME = flag('min-volume', 10_000);
+const MIN_VOLUME = flag('min-volume', PRESET.minVolume);
 
 /**
  * Premarket floors are different in kind, not just degree.
@@ -294,12 +342,18 @@ function render(rows, previousTop, mode) {
   // Premarket ranks on the move alone. The volume figure there is a sample of
   // a sample — a few hours of IEX prints — and weighting by it would mostly
   // rank by which names happen to route to IEX.
-  const ranked = rows.filter((r) => ONLY || r.pct > 0)
-    .sort((a, b) => (premarket ? b.pct - a.pct : score(b) - score(a)))
+  const ranked = rows.filter((r) => ONLY || (LOSERS ? r.pct < 0 : r.pct > 0))
+    .sort((a, b) => {
+      // score() is already built on |pct|, so decliners rank the same way
+      // gainers do — biggest move times participation, descending. Sorting
+      // ascending surfaced the stocks that had barely moved at all.
+      if (premarket || PRESET.rankByMove) return LOSERS ? a.pct - b.pct : b.pct - a.pct;
+      return score(b) - score(a);
+    })
     .slice(0, TOP);
 
   console.log(
-    `\n${ny()} ET   ${premarket ? 'PREMARKET   ' : ''}` +
+    `\n${ny()} ET   ${premarket ? 'PREMARKET   ' : ''}${LOSERS ? 'DECLINERS   ' : ''}` +
     `${rows.length} symbols passed the floors   feed=${FEED}`,
   );
   if (rows.length === 0) {
@@ -332,7 +386,8 @@ if (ONLY) {
   console.log('floors are off for a named list — everything asked for is shown');
 } else {
   console.log(`scanning ${symbols.length} tradable US equities`);
-  console.log(`floors: price >= $${MIN_PRICE}, today volume >= ${MIN_VOLUME.toLocaleString()}`);
+  console.log(`universe: ${PRESET_NAME} — price >= $${MIN_PRICE}, today volume >= ${MIN_VOLUME.toLocaleString()}` +
+    `, ranked by ${PRESET.rankByMove ? 'size of move' : 'move x volume ratio'}`);
 }
 if (WATCH) {
   console.log(`watching: rescan every ${INTERVAL_MIN} minute${INTERVAL_MIN === 1 ? '' : 's'}` +
